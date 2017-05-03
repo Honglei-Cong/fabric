@@ -268,16 +268,19 @@ func serve(args []string) error {
 			c, err := ln.Accept()
 			if err != nil {
 				logger.Errorf("pgwire accept failed: %s", err)
-				continue
+				break
 			}
-			logger.Errorf("new client: %s", c.RemoteAddr().String())
 
-			server := pgwire.MakeServer(&pgwire.Config{}, pgwire.NewExecutor())
-			err = server.ServeConn(context.Background(), c)
-			if err != nil {
-				logger.Errorf("pgwire server failed: %s", err)
-			}
-			c.Close()
+			go func(c net.Conn) {
+				logger.Errorf("new client: %s", c.RemoteAddr().String())
+
+				server := pgwire.MakeServer(&pgwire.Config{}, pgwire.NewExecutor())
+				err = server.ServeConn(context.Background(), c)
+				if err != nil {
+					logger.Errorf("pgwire server failed: %s", err)
+				}
+				c.Close()
+			}(c)
 		}
 	}()
 

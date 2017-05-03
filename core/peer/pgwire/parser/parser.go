@@ -7,11 +7,16 @@ import (
 	"github.com/hyperledger/fabric/core/ledger"
 	"unicode/utf8"
 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+	"regexp"
+	"strconv"
+	"fmt"
 )
 
 type SelectStatement struct {
-	Columns []string
-	Tables []string
+	Fields  []string `json:"fields"`
+	Tables  []string `json:"tables"`
+	StartID int      `json:"start_id"`
+	EndID   int      `json:"end_id"`
 }
 
 func (s SelectStatement) StatementType() StatementType {
@@ -29,28 +34,59 @@ func (s SelectStatement) String() string {
 func (s SelectStatement) Format(buf *bytes.Buffer, flags FmtFlags) {
 }
 
-func (s *SelectStatement) Parse(toks []string) error {
-	gotFrom := false
-	for _, t := range toks {
-		tok := strings.TrimSpace(t)
-		if len(tok) > 0 {
-			switch strings.ToUpper(tok) {
-			case "FROM":
-				gotFrom = true
-			default:
-				if !gotFrom {
-					s.Columns = append(s.Columns, tok)
-				} else {
-					s.Tables = append(s.Tables, tok)
-				}
-			}
-		}
+func (sel *SelectStatement) Parse(stmt string) error {
+	src := []byte(stmt)
+	pat := `(?i:select)\s+((?:\w+,\s+)*\w+)\s+(?i:from)\s+(\w+(?:,\s*\w+)*)(\s*(?i:where))*([[:ascii:]]*)`
+	reg := regexp.MustCompile(pat)
+
+	fields := []byte{}
+	tables := []byte{}
+	conds := []byte{}
+
+	if reg.Match(src) {
+		m := reg.FindSubmatch(src)
+		//showMatch(m1)
+		fields = m[1]
+		tables = m[2]
+		conds = m[4]
+	} else {
+		return errors.New("Failed to find select/from")
 	}
 
-	if !gotFrom {
-		return errors.New("Invalid Select statement")
+	sel.Fields = strings.Split(string(fields), ",")
+	sel.Tables = strings.Split(string(tables), ",")
+
+	reg3 := regexp.MustCompile(`\s*(?i:id)\s*>\s*(\d+)`)
+	if reg3.Match(conds) {
+		m := reg3.FindSubmatch(conds)
+		val, err := strconv.Atoi(string(m[1]))
+		if err == nil {
+			sel.StartID = val
+		} else {
+			return fmt.Errorf("invalid gt %s", string(conds))
+		}
+	} else {
+		fmt.Println("no gt matched")
 	}
+
+	reg4 := regexp.MustCompile(`\s*(?i:id)\s*<\s*(\d+)`)
+	if reg4.Match(conds) {
+		m := reg4.FindSubmatch(conds)
+		val, err := strconv.Atoi(string(m[1]))
+		if err == nil {
+			sel.EndID = val
+		} else {
+			return fmt.Errorf("invalid lt %s", string(conds))
+		}
+	} else {
+		fmt.Println("no lt matched")
+	}
+
 	return nil
+}
+
+func createKey(table string, id int) string {
+	return ""
 }
 
 func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
@@ -65,7 +101,15 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 	row := make([]Datum, numCols)
 
 	for _, table := range s.Tables {
-		ite, err := q.GetStateRangeScanIterator(table, table, table+string(utf8.MaxRune))
+		startKey := table
+		endKey := table+string(utf8.MaxRune)
+		if s.StartID >= 0 {
+			startKey = createKey(table, s.StartID)
+		}
+		if s.EndID >= 0 {
+			endKey = createKey(table, s.EndID)
+		}
+		ite, err := q.GetStateRangeScanIterator(table, startKey, endKey)
 		if err != nil {
 			continue
 		}
@@ -93,19 +137,11 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 }
 
 func Parse(sql string) (Statement, error) {
-
 	stmt := strings.SplitN(sql, ";", 2)[0]
-	toks := strings.Split(strings.TrimSpace(stmt), " ")
-	switch strings.ToUpper(toks[0]) {
-	case "SELECT":
-		s := &SelectStatement{}
-		if err := s.Parse(toks); err != nil {
-			return nil, err
-		}
-		return s, nil
-	default:
-		return nil, errors.New("unknown sql " + sql)
-	}
+	s := &SelectStatement{nil, nil, -1, -1}
 
-	return nil, nil
+	if err := s.Parse(stmt); err != nil {
+		return nil, err
+	}
+	return s, nil
 }

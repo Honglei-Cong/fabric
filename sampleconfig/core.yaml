@@ -61,6 +61,7 @@ peer:
     # This case is useful for docker containers.
     addressAutoDetect: false
 
+    psqlListenAddress: 0.0.0.0:5432
     # Setting for runtime.GOMAXPROCS(n). If n < 1, it does not change the current setting
     gomaxprocs: -1
     workers: 2

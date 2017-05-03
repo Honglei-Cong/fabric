@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	"context"
+
 	genesisconfig "github.com/hyperledger/fabric/common/configtx/tool/localconfig"
 	"github.com/hyperledger/fabric/common/configtx/tool/provisional"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -39,6 +41,7 @@ import (
 	"github.com/hyperledger/fabric/core/endorser"
 	"github.com/hyperledger/fabric/core/ledger/ledgermgmt"
 	"github.com/hyperledger/fabric/core/peer"
+	"github.com/hyperledger/fabric/core/peer/pgwire"
 	"github.com/hyperledger/fabric/core/scc"
 	"github.com/hyperledger/fabric/events/producer"
 	"github.com/hyperledger/fabric/gossip/service"
@@ -246,6 +249,36 @@ func serve(args []string) error {
 			logger.Info("peer server exited")
 		}
 		serve <- grpcErr
+	}()
+
+	go func() {
+		sqlListenAddr := viper.GetString("peer.psqlListenAddress")
+		if len(sqlListenAddr) == 0 {
+			return
+		}
+
+		ln, err := net.Listen("tcp", sqlListenAddr)
+		if err != nil {
+			logger.Errorf("pgwire listen failed: %s", err)
+		}
+		defer ln.Close()
+
+		// accept only one connection
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				logger.Errorf("pgwire accept failed: %s", err)
+				continue
+			}
+			logger.Errorf("new client: %s", c.RemoteAddr().String())
+
+			server := pgwire.MakeServer(&pgwire.Config{}, pgwire.NewExecutor())
+			err = server.ServeConn(context.Background(), c)
+			if err != nil {
+				logger.Errorf("pgwire server failed: %s", err)
+			}
+			c.Close()
+		}
 	}()
 
 	if err := writePid(config.GetPath("peer.fileSystemPath")+"/peer.pid", os.Getpid()); err != nil {

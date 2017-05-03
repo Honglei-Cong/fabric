@@ -30,6 +30,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/stateleveldb"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statetidb"
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/utils"
@@ -81,12 +82,19 @@ func NewProvider() (ledger.PeerLedgerProvider, error) {
 
 	// Initialize the versioned database (state database)
 	var vdbProvider statedb.VersionedDBProvider
-	if !ledgerconfig.IsCouchDBEnabled() {
-		logger.Debug("Constructing leveldb VersionedDBProvider")
+	var err error
+	switch ledgerconfig.GetLedgerDBType() {
+	case "goleveldb":
+		logger.Debug("Constructing couchdb VersionedDBProvider")
 		vdbProvider = stateleveldb.NewVersionedDBProvider()
-	} else {
-		logger.Debug("Constructing CouchDB VersionedDBProvider")
-		var err error
+	case "tidb":
+		logger.Debug("Constructing tidb VersionedDBProvider")
+		vdbProvider, err = statetidb.NewVersionedDBProvider()
+		if err != nil {
+			return nil, err
+		}
+	default:
+		logger.Debug("Constructing leveldb VersionedDBProvider")
 		vdbProvider, err = statecouchdb.NewVersionedDBProvider()
 		if err != nil {
 			return nil, err

@@ -48,8 +48,9 @@ DOCKER_RUN_FLAGS+=-e 'NO_PROXY=$(NO_PROXY)'
 endif
 
 DRUN = docker run -i --rm $(DOCKER_RUN_FLAGS) \
-	-v $(abspath .):/opt/gopath/src/$(PKGNAME) \
+	-v $(GOPATH)/src:/opt/gopath/src \
 	-w /opt/gopath/src/$(PKGNAME)
+	#-v $(abspath .):/opt/gopath/src/$(PKGNAME) \
 
 DBUILD = docker build $(DOCKER_BUILD_FLAGS)
 

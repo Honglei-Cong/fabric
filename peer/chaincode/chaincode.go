@@ -59,6 +59,10 @@ func AddFlags(cmd *cobra.Command) {
 	flags.StringVarP(&orderingEndpoint, "orderer", "o", "", "Ordering service endpoint")
 	flags.BoolVarP(&tls, "tls", "", false, "Use TLS when communicating with the orderer endpoint")
 	flags.StringVarP(&caFile, "cafile", "", "", "Path to file containing PEM-encoded trusted certificate(s) for the ordering endpoint")
+	flags.StringVarP(&batchSize, "batchSize", "b", common.UndefinedParamValue,
+		fmt.Sprint("size of batch invoke"))
+	flags.StringVarP(&workerCount, "workerCount", "w", "10",
+		fmt.Sprint("concurrent worker count"))
 }
 
 // Cmd returns the cobra command for Chaincode
@@ -72,6 +76,7 @@ func Cmd(cf *ChaincodeCmdFactory) *cobra.Command {
 	chaincodeCmd.AddCommand(packageCmd(cf, nil))
 	chaincodeCmd.AddCommand(installCmd(cf))
 	chaincodeCmd.AddCommand(signpackageCmd(cf))
+	chaincodeCmd.AddCommand(batchInvokeCmd(cf))
 
 	return chaincodeCmd
 }
@@ -95,6 +100,8 @@ var (
 	orderingEndpoint  string
 	tls               bool
 	caFile            string
+	batchSize         string
+	workerCount       string
 )
 
 var chaincodeCmd = &cobra.Command{

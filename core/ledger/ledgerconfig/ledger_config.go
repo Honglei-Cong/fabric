@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"strings"
 )
 
 // CouchDBDef contains parameters
@@ -33,6 +34,10 @@ type CouchDBDef struct {
 	RequestTimeout      time.Duration
 }
 
+type TiDBDef struct {
+	PDAddress string
+}
+
 //IsCouchDBEnabled exposes the useCouchDB variable
 func IsCouchDBEnabled() bool {
 	stateDatabase := viper.GetString("ledger.state.stateDatabase")
@@ -40,6 +45,14 @@ func IsCouchDBEnabled() bool {
 		return true
 	}
 	return false
+}
+
+func GetLedgerDBType() string {
+	return strings.ToLower(viper.GetString("ledger.state.stateDatabase"))
+}
+
+func GetLedgerOwner() string {
+	return viper.GetString("peer.id")
 }
 
 // GetRootPath returns the filesystem path.
@@ -85,6 +98,12 @@ func GetCouchDBDefinition() *CouchDBDef {
 	requestTimeout := viper.GetDuration("ledger.state.couchDBConfig.requestTimeout")
 
 	return &CouchDBDef{couchDBAddress, username, password, maxRetries, maxRetriesOnStartup, requestTimeout}
+}
+
+func GetTiDBDefinition() *TiDBDef {
+	pdAddress := viper.GetString("ledger.state.tiDBConfig.pdAddress")
+
+	return &TiDBDef{pdAddress}
 }
 
 //GetQueryLimit exposes the queryLimit variable

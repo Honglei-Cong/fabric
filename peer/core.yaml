@@ -376,9 +376,10 @@ ledger:
   blockchain:
 
   state:
-    # stateDatabase - options are "goleveldb", "CouchDB"
+    # stateDatabase - options are "goleveldb", "CouchDB", "TiDB"
     # goleveldb - default state database stored in goleveldb.
     # CouchDB - store state database in CouchDB
+    # TiDB - store state base in TiDB
     stateDatabase: goleveldb
     couchDBConfig:
        couchDBAddress: 127.0.0.1:5984
@@ -390,6 +391,8 @@ ledger:
        maxRetriesOnStartup: 10
        # CouchDB request timeout (unit: duration, e.g. 20s)
        requestTimeout: 20s
+    tiDBConfig:
+        pdAddress: 127.0.0.1:2379
 
     # historyDatabase - options are true or false
     # Indicates if the history of key updates should be stored in goleveldb

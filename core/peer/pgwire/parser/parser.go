@@ -10,13 +10,15 @@ import (
 	"regexp"
 	"strconv"
 	"fmt"
+	"github.com/hyperledger/fabric/core/chaincode/shim"
+	"encoding/binary"
 )
 
 type SelectStatement struct {
 	Fields  []string `json:"fields"`
 	Tables  []string `json:"tables"`
-	StartID int      `json:"start_id"`
-	EndID   int      `json:"end_id"`
+	StartID uint64      `json:"start_id"`
+	EndID   uint64      `json:"end_id"`
 }
 
 func (s SelectStatement) StatementType() StatementType {
@@ -61,7 +63,7 @@ func (sel *SelectStatement) Parse(stmt string) error {
 		m := reg3.FindSubmatch(conds)
 		val, err := strconv.Atoi(string(m[1]))
 		if err == nil {
-			sel.StartID = val
+			sel.StartID = uint64(val)
 		} else {
 			return fmt.Errorf("invalid gt %s", string(conds))
 		}
@@ -74,7 +76,7 @@ func (sel *SelectStatement) Parse(stmt string) error {
 		m := reg4.FindSubmatch(conds)
 		val, err := strconv.Atoi(string(m[1]))
 		if err == nil {
-			sel.EndID = val
+			sel.EndID = uint64(val)
 		} else {
 			return fmt.Errorf("invalid lt %s", string(conds))
 		}
@@ -85,8 +87,17 @@ func (sel *SelectStatement) Parse(stmt string) error {
 	return nil
 }
 
-func createKey(table string, id int) string {
-	return ""
+func createKey(table string, id uint64) string {
+	const (
+		minUnicodeRuneValue   = 0            //U+0000
+		maxUnicodeRuneValue   = utf8.MaxRune //U+10FFFF - maximum (and unallocated) code point
+		compositeKeyNamespace = "\x00"
+		emptyKeySubstitute    = "\x01"
+	)
+
+	idBuf := new(bytes.Buffer)
+	binary.Write(idBuf, binary.BigEndian, id)
+	return compositeKeyNamespace + table + string(minUnicodeRuneValue) + string(idBuf.Bytes())
 }
 
 func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {

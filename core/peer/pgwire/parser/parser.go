@@ -1,24 +1,23 @@
 package parser
 
 import (
-	"strings"
-	"errors"
 	"bytes"
+	"encoding/binary"
+	"errors"
+	"fmt"
 	"github.com/hyperledger/fabric/core/ledger"
-	"unicode/utf8"
 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
 	"regexp"
 	"strconv"
-	"fmt"
-	"github.com/hyperledger/fabric/core/chaincode/shim"
-	"encoding/binary"
+	"strings"
+	"unicode/utf8"
 )
 
 type SelectStatement struct {
 	Fields  []string `json:"fields"`
 	Tables  []string `json:"tables"`
-	StartID uint64      `json:"start_id"`
-	EndID   uint64      `json:"end_id"`
+	StartID int64    `json:"start_id"`
+	EndID   int64    `json:"end_id"`
 }
 
 func (s SelectStatement) StatementType() StatementType {
@@ -38,12 +37,14 @@ func (s SelectStatement) Format(buf *bytes.Buffer, flags FmtFlags) {
 
 func (sel *SelectStatement) Parse(stmt string) error {
 	src := []byte(stmt)
-	pat := `(?i:select)\s+((?:\w+,\s+)*\w+)\s+(?i:from)\s+(\w+(?:,\s*\w+)*)(\s*(?i:where))*([[:ascii:]]*)`
+	pat := `(?i:select)\s+((?:[\w*]+,\s*)*[\w*]+)\s+(?i:from)\s+(\w+(?:,\s*\w+)*)(\s*(?i:where))*([[:ascii:]]*)`
 	reg := regexp.MustCompile(pat)
 
 	fields := []byte{}
 	tables := []byte{}
 	conds := []byte{}
+
+	fmt.Println(">>> stmt:", stmt)
 
 	if reg.Match(src) {
 		m := reg.FindSubmatch(src)
@@ -55,15 +56,19 @@ func (sel *SelectStatement) Parse(stmt string) error {
 		return errors.New("Failed to find select/from")
 	}
 
-	sel.Fields = strings.Split(string(fields), ",")
-	sel.Tables = strings.Split(string(tables), ",")
+	for _, s := range strings.Split(string(fields), ",") {
+		sel.Fields = append(sel.Fields, strings.TrimSpace(s))
+	}
+	for _, s := range strings.Split(string(tables), ",") {
+		sel.Tables = append(sel.Tables, strings.TrimSpace(s))
+	}
 
 	reg3 := regexp.MustCompile(`\s*(?i:id)\s*>\s*(\d+)`)
 	if reg3.Match(conds) {
 		m := reg3.FindSubmatch(conds)
 		val, err := strconv.Atoi(string(m[1]))
 		if err == nil {
-			sel.StartID = uint64(val)
+			sel.StartID = int64(val)
 		} else {
 			return fmt.Errorf("invalid gt %s", string(conds))
 		}
@@ -76,7 +81,7 @@ func (sel *SelectStatement) Parse(stmt string) error {
 		m := reg4.FindSubmatch(conds)
 		val, err := strconv.Atoi(string(m[1]))
 		if err == nil {
-			sel.EndID = uint64(val)
+			sel.EndID = int64(val)
 		} else {
 			return fmt.Errorf("invalid lt %s", string(conds))
 		}
@@ -87,7 +92,7 @@ func (sel *SelectStatement) Parse(stmt string) error {
 	return nil
 }
 
-func createKey(table string, id uint64) string {
+func createKey(table string, id int64) string {
 	const (
 		minUnicodeRuneValue   = 0            //U+0000
 		maxUnicodeRuneValue   = utf8.MaxRune //U+10FFFF - maximum (and unallocated) code point
@@ -104,7 +109,7 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 	var res StatementResults
 
 	numCols := 2
-	Cols := []ResultColumn {
+	Cols := []ResultColumn{
 		{Name: "Key", Typ: TypeString},
 		{Name: "Value", Typ: TypeString},
 	}
@@ -113,7 +118,7 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 
 	for _, table := range s.Tables {
 		startKey := table
-		endKey := table+string(utf8.MaxRune)
+		endKey := table + string(utf8.MaxRune)
 		if s.StartID >= 0 {
 			startKey = createKey(table, s.StartID)
 		}
@@ -126,6 +131,8 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 		}
 		for {
 			kv, _ := ite.Next()
+
+			fmt.Printf(">> %v \n", kv)
 			if kv == nil {
 				break
 			}
@@ -138,10 +145,10 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 	}
 
 	res.ResultList = append(res.ResultList, Result{
-		PGTag: "SELECT",
-		Type: Rows,
+		PGTag:   "SELECT",
+		Type:    Rows,
 		Columns: Cols,
-		Rows: rowC,
+		Rows:    rowC,
 	})
 
 	return res

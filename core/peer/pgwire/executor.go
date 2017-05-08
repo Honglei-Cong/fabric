@@ -20,9 +20,11 @@ func (e *Executor) ExecuteStatements(session *Session, stmts string) parser.Stat
 	res := parser.StatementResults{}
 	stmt, err := parser.Parse(stmts)
 	if err != nil {
+		fmt.Println(">>>> err: ", err)
 		return res
 	}
 	if stmt == nil {
+		fmt.Println(">>>> no stmt")
 		res.Empty = true
 		return res
 	}

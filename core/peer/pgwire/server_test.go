@@ -1,11 +1,12 @@
 package pgwire
 
 import (
-	"testing"
 	"net"
-	"golang.org/x/net/context"
+	"testing"
+
 	commonledger "github.com/hyperledger/fabric/common/ledger"
-	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+	"golang.org/x/net/context"
 )
 
 type UnresolvedAddr struct {
@@ -89,9 +90,9 @@ func TestConnection(t *testing.T) {
 }
 
 type testQueryIterator struct {
-	MaxCount int
-	Counter int
-	TestResult *ledger.KV
+	MaxCount   int
+	Counter    int
+	TestResult *queryresult.KV
 }
 
 func (ite *testQueryIterator) Next() (commonledger.QueryResult, error) {
@@ -119,8 +120,8 @@ func (q *testQueryExecutor) GetStateMultipleKeys(namespace string, keys []string
 func (q *testQueryExecutor) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (commonledger.ResultsIterator, error) {
 	return &testQueryIterator{
 		MaxCount: 10,
-		TestResult: &ledger.KV{
-			Key: "test-key",
+		TestResult: &queryresult.KV{
+			Key:   "test-key",
 			Value: []byte("test-value"),
 		},
 	}, nil
@@ -133,7 +134,7 @@ func (q *testQueryExecutor) ExecuteQuery(namespace, query string) (commonledger.
 func (q *testQueryExecutor) Done() {
 }
 
-func TestServer (t *testing.T) {
+func TestServer(t *testing.T) {
 	ln, err := net.Listen(TestAddr.Network(), TestAddr.String())
 	if err != nil {
 		t.Fatal(err)

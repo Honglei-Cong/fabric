@@ -21,9 +21,13 @@ type Person struct {
 func (p *Person) GetID() uint64   { return p.ID }
 func (p *Person) SetID(id uint64) { p.ID = id }
 
+var tables = []*Table{
+	{Obj: &Person{}, Keys: []string{"name"}},
+}
+
 func (t *TestDataCC) Init(stub shim.ChaincodeStubInterface) pb.Response {
 
-	if err := CreateObjectType(stub, &Person{}, []string{"name"}); err != nil {
+	if err := InitTables(stub, tables); err != nil {
 		return shim.Error(err.Error())
 	}
 
@@ -32,7 +36,18 @@ func (t *TestDataCC) Init(stub shim.ChaincodeStubInterface) pb.Response {
 
 func (t *TestDataCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	fmt.Println("ex02 Invoke")
-	_, args := stub.GetFunctionAndParameters()
+	function, args := stub.GetFunctionAndParameters()
+
+	if function == "Create" {
+		return t.create(stub, args)
+	} else if function == "sqlQuery" {
+		return sqlQuery(stub, args)
+	}
+
+	return shim.Error(fmt.Sprintf("invalid function name: %s", function))
+}
+
+func (t *TestDataCC) create(stub shim.ChaincodeStubInterface, args []string) pb.Response {
 
 	if len(args) < 1 {
 		return shim.Error("invalid args: no counter")
@@ -47,7 +62,7 @@ func (t *TestDataCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 
 	for i := 0; i < n; i++ {
 		p := &Person{
-			ID:      idx+uint64(i),
+			ID:      idx + uint64(i),
 			Name:    fmt.Sprintf("name-%d", idx+uint64(i)),
 			Address: fmt.Sprintf("address-%d", idx+uint64(i)),
 			Tel:     fmt.Sprintf("tel-%d", idx+uint64(i)),
@@ -59,6 +74,7 @@ func (t *TestDataCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 
 	return shim.Success(nil)
 }
+
 
 func main() {
 	err := shim.Start(new(TestDataCC))

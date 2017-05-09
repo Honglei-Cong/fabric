@@ -46,6 +46,30 @@ type KVObject interface {
 	SetID(id uint64)
 }
 
+type Table struct {
+	Obj  KVObject
+	Keys []string
+}
+
+func InitTables(stub shim.ChaincodeStubInterface, tables []*Table) error {
+	for _, table := range tables {
+		if !isTableExists(stub, table) {
+			err := CreateObjectType(stub, table.Obj, table.Keys)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func isTableExists(stub shim.ChaincodeStubInterface, table *Table) bool {
+	typename := getTypeName(table.Obj)
+	t, _ := getTypeInfo(stub, typename)
+	return t != nil
+}
+
+
 func id2String(id uint64) string {
 	return fmt.Sprintf("%016x", id)
 }
@@ -61,6 +85,24 @@ func getTypeName(obj interface{}) string {
 		return typ.Name()
 	}
 	return ""
+}
+
+func getTypeFields(obj interface{}) map[string]bool {
+	typ := reflect.TypeOf(obj)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	} else if typ.Kind() != reflect.Struct {
+		return map[string]bool{}
+	}
+
+	elms := make(map[string]bool)
+	for i := 0; i < typ.NumField(); i++ {
+		if v, ok := typ.Field(i).Tag.Lookup("json"); ok {
+			elms[v] = true
+		}
+	}
+
+	return elms
 }
 
 func getTypeKey(typename string) string {
@@ -358,6 +400,20 @@ func DelObject(stub shim.ChaincodeStubInterface, obj KVObject) error {
 		}
 	}
 	return nil
+}
+
+func QueryObjectFromID(stub shim.ChaincodeStubInterface, obj KVObject, id uint64) (shim.StateQueryIteratorInterface, error) {
+	typename := getTypeName(obj)
+
+	ite := &ObjectIterator{
+		typename:  typename,
+		stub:      stub,
+		iters:     make([]shim.StateQueryIteratorInterface, 0),
+		currObjId: id2String(id),
+		obj:       obj,
+	}
+
+	return ite, nil
 }
 
 func QueryObjects(stub shim.ChaincodeStubInterface, obj KVObject, keys map[string]string) (shim.StateQueryIteratorInterface, error) {

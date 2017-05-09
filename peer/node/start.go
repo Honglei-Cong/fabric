@@ -274,7 +274,7 @@ func serve(args []string) error {
 			}
 
 			go func(c net.Conn) {
-				logger.Errorf("new client: %s", c.RemoteAddr().String())
+				logger.Debugf("new psql client: %s", c.RemoteAddr().String())
 
 				server := pgwire.MakeServer(&pgwire.Config{}, pgwire.NewExecutor())
 				err = server.ServeConn(context.Background(), c)

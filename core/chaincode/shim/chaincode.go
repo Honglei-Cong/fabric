@@ -422,9 +422,9 @@ func (stub *ChaincodeStub) GetStateByRange(startKey, endKey string) (StateQueryI
 	if startKey == "" {
 		startKey = emptyKeySubstitute
 	}
-	if err := validateSimpleKeys(startKey, endKey); err != nil {
-		return nil, err
-	}
+	//if err := validateSimpleKeys(startKey, endKey); err != nil {
+	//	return nil, err
+	//}
 	response, err := stub.handler.handleGetStateByRange(startKey, endKey, stub.TxID)
 	if err != nil {
 		return nil, err

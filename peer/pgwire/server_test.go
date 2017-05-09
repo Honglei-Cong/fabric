@@ -4,9 +4,14 @@ import (
 	"net"
 	"testing"
 
-	commonledger "github.com/hyperledger/fabric/common/ledger"
-	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+	"github.com/hyperledger/fabric/msp/mgmt/testtools"
+	"github.com/hyperledger/fabric/peer/chaincode"
+	"github.com/hyperledger/fabric/peer/common"
+	pb "github.com/hyperledger/fabric/protos/peer"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
+	"github.com/hyperledger/fabric/core/chaincode/shim"
+	"encoding/json"
 )
 
 type UnresolvedAddr struct {
@@ -89,50 +94,50 @@ func TestConnection(t *testing.T) {
 	}
 }
 
-type testQueryIterator struct {
-	MaxCount   int
-	Counter    int
-	TestResult *queryresult.KV
-}
-
-func (ite *testQueryIterator) Next() (commonledger.QueryResult, error) {
-	if ite.Counter < ite.MaxCount {
-		ite.Counter++
-		return ite.TestResult, nil
-	}
-	return nil, nil
-}
-
-func (ite *testQueryIterator) Close() {
-}
-
-type testQueryExecutor struct {
-}
-
-func (q *testQueryExecutor) GetState(namespace string, key string) ([]byte, error) {
-	return nil, nil
-}
-
-func (q *testQueryExecutor) GetStateMultipleKeys(namespace string, keys []string) ([][]byte, error) {
-	return nil, nil
-}
-
-func (q *testQueryExecutor) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (commonledger.ResultsIterator, error) {
-	return &testQueryIterator{
-		MaxCount: 10,
-		TestResult: &queryresult.KV{
-			Key:   "test-key",
-			Value: []byte("{\"a\":1, \"b\":\"2\", \"c\":\"3\", \"d\":\"4\"}"),
-		},
-	}, nil
-}
-
-func (q *testQueryExecutor) ExecuteQuery(namespace, query string) (commonledger.ResultsIterator, error) {
-	return nil, nil
-}
-
-func (q *testQueryExecutor) Done() {
-}
+//type testQueryIterator struct {
+//	MaxCount   int
+//	Counter    int
+//	TestResult *queryresult.KV
+//}
+//
+//func (ite *testQueryIterator) Next() (commonledger.QueryResult, error) {
+//	if ite.Counter < ite.MaxCount {
+//		ite.Counter++
+//		return ite.TestResult, nil
+//	}
+//	return nil, nil
+//}
+//
+//func (ite *testQueryIterator) Close() {
+//}
+//
+//type testQueryExecutor struct {
+//}
+//
+//func (q *testQueryExecutor) GetState(namespace string, key string) ([]byte, error) {
+//	return nil, nil
+//}
+//
+//func (q *testQueryExecutor) GetStateMultipleKeys(namespace string, keys []string) ([][]byte, error) {
+//	return nil, nil
+//}
+//
+//func (q *testQueryExecutor) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (commonledger.ResultsIterator, error) {
+//	return &testQueryIterator{
+//		MaxCount: 10,
+//		TestResult: &queryresult.KV{
+//			Key:   "test-key",
+//			Value: []byte("{\"a\":1, \"b\":\"2\", \"c\":\"3\", \"d\":\"4\"}"),
+//		},
+//	}, nil
+//}
+//
+//func (q *testQueryExecutor) ExecuteQuery(namespace, query string) (commonledger.ResultsIterator, error) {
+//	return nil, nil
+//}
+//
+//func (q *testQueryExecutor) Done() {
+//}
 
 func TestServer(t *testing.T) {
 	ln, err := net.Listen(TestAddr.Network(), TestAddr.String())
@@ -147,8 +152,35 @@ func TestServer(t *testing.T) {
 	}
 	defer c.Close()
 
+	msptesttools.LoadMSPSetupForTesting()
+	signer, err := common.GetDefaultSigner()
+	assert.NoError(t, err)
+
+	queryResponse := &shim.QueryResult{
+		QueryOP: "SELECT",
+		ContinueID: -1,
+		Rows: []shim.QueryRow{
+			map[string]string{"a":"1", "b":"1", "c":"1", "d":"1"},
+			map[string]string{"a":"2", "b":"2", "c":"2", "d":"2"},
+			map[string]string{"a":"3", "b":"3", "c":"3", "d":"3"},
+		},
+	}
+
+	queryData, err := json.Marshal(queryResponse)
+	assert.NoError(t, err)
+
+	mockResponse := &pb.ProposalResponse{
+		Response:    &pb.Response{Status: 200, Payload: queryData},
+		Endorsement: &pb.Endorsement{},
+	}
+
+	mockCF := &chaincode.ChaincodeCmdFactory{
+		Signer:         signer,
+		EndorserClient: common.GetMockEndorserClient(mockResponse, nil),
+	}
+
 	exec := NewExecutor()
-	exec.QueryExecutor = &testQueryExecutor{}
+	exec.CmdFactory = mockCF
 	server := MakeServer(&Config{}, exec)
 	err = server.ServeConn(context.Background(), c)
 	if err != nil {

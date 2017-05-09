@@ -24,7 +24,7 @@ package parser
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/chaincode/shim"
 )
 
 // Instructions for creating new types: If a type needs to satisfy an
@@ -76,7 +76,8 @@ type Statement interface {
 	// might make sense to pass a tag format specifier.
 	StatementTag() string
 
-	Execute(ledger.QueryExecutor, string) StatementResults
+	BuildChaincodePrepareRequest() (*shim.SqlQuery, error)
+	BuildChaincodeQueryRequest() (*shim.SqlQuery, error)
 }
 
 //// StatementType implements the Statement interface.
@@ -294,12 +295,12 @@ type Statement interface {
 //// StatementTag returns a short string identifying the type of statement.
 //func (*SelectClause) StatementTag() string { return "SELECT" }
 //
-//// StatementType implements the Statement interface.
-//func (*Set) StatementType() StatementType { return Ack }
-//
-//// StatementTag returns a short string identifying the type of statement.
-//func (*Set) StatementTag() string { return "SET" }
-//
+// StatementType implements the Statement interface.
+func (*Set) StatementType() StatementType { return Ack }
+
+// StatementTag returns a short string identifying the type of statement.
+func (*Set) StatementTag() string { return "SET" }
+
 //// StatementType implements the Statement interface.
 //func (*SetTransaction) StatementType() StatementType { return Ack }
 //

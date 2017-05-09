@@ -17,21 +17,19 @@
 package pgwire
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
 
-	"golang.org/x/net/context"
-
-	"errors"
-	"fmt"
-
-	"github.com/hyperledger/fabric/core/peer"
+	"github.com/hyperledger/fabric/peer/chaincode"
 	"github.com/hyperledger/fabric/peer/pgwire/envutil"
 	"github.com/hyperledger/fabric/peer/pgwire/parser"
 	"github.com/hyperledger/fabric/peer/pgwire/pgerror"
 	"github.com/hyperledger/fabric/peer/pgwire/syncutil"
 	"github.com/op/go-logging"
+	"golang.org/x/net/context"
 )
 
 var logger = logging.MustGetLogger("pgwire")
@@ -109,6 +107,8 @@ func MakeServer(cfg *Config, executor *Executor) *Server {
 		cfg:      cfg,
 		executor: executor,
 	}
+
+	//logging.SetLevel(logging.INFO, "pgwire")
 
 	server.mu.Lock()
 	server.mu.connCancelMap = make(cancelChanMap)
@@ -324,25 +324,24 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 			return v3conn.sendInternalError(err.Error())
 		}
 
-		if s.executor.QueryExecutor == nil {
-			if len(v3conn.sessionArgs.Channel) == 0 || len(v3conn.sessionArgs.Namespace) == 0 {
-				return v3conn.sendError(errors.New(ErrFailedGetDatabaseName))
+		if len(v3conn.sessionArgs.Channel) == 0 || len(v3conn.sessionArgs.Namespace) == 0 {
+			return v3conn.sendError(errors.New(ErrFailedGetDatabaseName))
+		}
+		s.executor.Channel = v3conn.sessionArgs.Channel
+		s.executor.Namespace = v3conn.sessionArgs.Namespace
+
+		if s.executor.CmdFactory == nil {
+			cf, err := chaincode.InitCmdFactory(true, false)
+			if err != nil {
+				return v3conn.sendInternalError(fmt.Sprintf("executor init cmd failed: %s", err))
 			}
 
-			lgr := peer.GetLedger(v3conn.sessionArgs.Channel)
-			if lgr == nil {
-				return v3conn.sendError(errors.New(ErrFailedFoundDatabase))
-			}
-			s.executor.Namespace = v3conn.sessionArgs.Namespace
-			s.executor.QueryExecutor, err = lgr.NewQueryExecutor()
-			if err != nil {
-				return v3conn.sendInternalError(err.Error())
-			}
+			s.executor.CmdFactory = cf
 		}
 
 		err := v3conn.serve(ctx, s.IsDraining)
 		if err != nil {
-			logger.Warningf("v3conn server: %s", err)
+			logger.Warningf("v3conn serve error: %s", err)
 		}
 		// If the error that closed the connection is related to an
 		// administrative shutdown, relay that information to the client.

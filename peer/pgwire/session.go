@@ -52,7 +52,12 @@ type Session struct {
 }
 
 func NewSession(ctx context.Context, args SessionArgs, e *Executor, remote net.Addr) *Session {
-	return &Session{}
+	s := &Session{}
+
+	s.PreparedStatements = makePreparedStatements(s)
+	s.PreparedPortals = makePreparedPortals(s)
+
+	return s
 }
 
 // Finish releases resources held by the Session.

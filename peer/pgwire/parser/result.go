@@ -1,5 +1,9 @@
 package parser
 
+import (
+	"github.com/hyperledger/fabric/core/chaincode/shim"
+)
+
 
 // ResultColumn contains the name and type of a SQL "cell".
 type ResultColumn struct {
@@ -69,3 +73,40 @@ func (r *Result) Close() {
 		r.Rows.Close()
 	}
 }
+
+func BuildStatementResult(queryResult *shim.QueryResult) *StatementResults {
+	res := &StatementResults{}
+	Cols := []ResultColumn{}
+	for _, col := range queryResult.Cols {
+		Cols = append(Cols, ResultColumn{Name: col, Typ: TypeString})
+	}
+
+	logger.Debugf(">>>> cols: %v \n", Cols)
+
+	rowC := NewRowContainer(Cols, 0)
+	row := make([]Datum, len(Cols))
+
+	for _, r := range queryResult.Rows {
+		logger.Debugf(">>>> row: %v \n", r)
+		for i, c := range Cols {
+			v, avail := r[c.Name]
+			if avail {
+				row[i] = NewDString(v)
+			} else {
+				row[i] = NewDString("null")
+			}
+		}
+
+		rowC.AddRow(row)
+	}
+
+	res.ResultList = append(res.ResultList, Result{
+		PGTag:   queryResult.QueryOP,
+		Type:    Rows,
+		Columns: Cols,
+		Rows:    rowC,
+	})
+
+	return res
+}
+

@@ -8,14 +8,12 @@ import (
 // PreparedStatement is a SQL statement that has been parsed and the types
 // of arguments and results have been determined.
 type PreparedStatement struct {
-	Query       string
-	Type        parser.StatementType
+	Statement   parser.Statement
 	SQLTypes    parser.PlaceholderTypes
 	Columns     parser.ResultColumns
 	portalNames map[string]struct{}
 
 	ProtocolMeta interface{} // a field for protocol implementations to hang metadata off of.
-
 }
 
 // PreparedStatements is a mapping of PreparedStatement names to their
@@ -23,6 +21,13 @@ type PreparedStatement struct {
 type PreparedStatements struct {
 	session *Session
 	stmts   map[string]*PreparedStatement
+}
+
+func makePreparedStatements(s *Session) PreparedStatements {
+	return PreparedStatements{
+		session: s,
+		stmts:   make(map[string]*PreparedStatement),
+	}
 }
 
 // Get returns the PreparedStatement with the provided name.
@@ -40,26 +45,33 @@ func (ps PreparedStatements) Exists(name string) bool {
 // New creates a new PreparedStatement with the provided name and corresponding
 // query string, using the given PlaceholderTypes hints to assist in inferring
 // placeholder types.
-func (ps PreparedStatements) New(
+func (ps PreparedStatements) NewFromString(
 ctx context.Context, e *Executor, name, query string, placeholderHints parser.PlaceholderTypes,
 ) (*PreparedStatement, error) {
-	// Prepare the query. This completes the typing of placeholders.
-	stmt, err := e.Prepare(query, ps.session, placeholderHints)
+	stmts, err := parser.Parse(query)
 	if err != nil {
 		return nil, err
 	}
+	return ps.New(e, name, stmts, len(query), placeholderHints)
+}
 
-	//// For now we are just counting the size of the query string and
-	//// statement name. When we start storing the prepared query plan
-	//// during prepare, this should be tallied up to the monitor as well.
-	//sz := int64(uintptr(len(query)+len(name)) + unsafe.Sizeof(*stmt))
-	//if err := stmt.memAcc.Wsession(ps.session).OpenAndInit(sz); err != nil {
-	//	return nil, err
-	//}
-	//
-	//if prevStmt, ok := ps.Get(name); ok {
-	//	prevStmt.memAcc.Wsession(ps.session).Close()
-	//}
+// New creates a new PreparedStatement with the provided name and corresponding
+// query statements, using the given PlaceholderTypes hints to assist in
+// inferring placeholder types.
+//
+// ps.session.Ctx() is used as the logging context for the prepare operation.
+func (ps PreparedStatements) New(
+e *Executor,
+name string,
+stmts []parser.Statement,
+queryLen int,
+placeholderHints parser.PlaceholderTypes,
+) (*PreparedStatement, error) {
+	// Prepare the query. This completes the typing of placeholders.
+	stmt, err := e.Prepare(stmts, ps.session, placeholderHints)
+	if err != nil {
+		return nil, err
+	}
 
 	ps.stmts[name] = stmt
 	return stmt, nil

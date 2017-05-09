@@ -86,7 +86,7 @@ func pgTypeForParserType(t parser.Type) pgType {
 const secondsInDay = 24 * 60 * 60
 
 func (b *writeBuffer) writeTextDatum(d parser.Datum, sessionLoc *time.Location) {
-	logger.Infof("pgwire writing TEXT datum of type: %T, %#v", d, d)
+	logger.Debugf("pgwire writing TEXT datum of type: %T, %#v", d, d)
 	if d == parser.DNull {
 		// NULL is encoded as -1; all other values have a length prefix.
 		b.putInt32(-1)
@@ -198,7 +198,7 @@ func (b *writeBuffer) writeTextDatum(d parser.Datum, sessionLoc *time.Location) 
 }
 
 func (b *writeBuffer) writeBinaryDatum(d parser.Datum, sessionLoc *time.Location) {
-	logger.Infof("pgwire writing BINARY datum of type: %T, %#v", d, d)
+	logger.Debugf("pgwire writing BINARY datum of type: %T, %#v", d, d)
 	if d == parser.DNull {
 		// NULL is encoded as -1; all other values have a length prefix.
 		b.putInt32(-1)

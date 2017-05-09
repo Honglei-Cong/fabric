@@ -391,7 +391,7 @@ func (c *v3Conn) serve(ctx context.Context, draining func() bool) error {
 			logger.Infof("pgwire: ignoring %s till sync", typ)
 			continue
 		}
-		logger.Infof("pgwire: processing %s", typ)
+		logger.Debugf("pgwire: processing %s", typ)
 		switch typ {
 		case clientMsgSync:
 			c.doingExtendedQueryMessage = false
@@ -470,7 +470,13 @@ func (c *v3Conn) handleSimpleQuery(ctx context.Context, buf *readBuffer) error {
 		return err
 	}
 
-	return c.executeStatements(ctx, query, nil, nil, true, 0)
+	logger.Debug(">>>>>>>>>>>>>>", query)
+	stmts, err := parser.Parse(query)
+	if err != nil {
+		logger.Warning(">>>> err: ", err)
+		return err
+	}
+	return c.executeStatements(ctx, stmts, nil, nil, true, 0)
 }
 
 func (c *v3Conn) handleParse(ctx context.Context, buf *readBuffer) error {
@@ -517,7 +523,8 @@ func (c *v3Conn) handleParse(ctx context.Context, buf *readBuffer) error {
 		sqlTypeHints[strconv.Itoa(i+1)] = v
 	}
 	// Create the new PreparedStatement in the connection's Session.
-	stmt, err := c.session.PreparedStatements.New(ctx, c.executor, name, query, sqlTypeHints)
+	logger.Debugf(">>> name: %s, query: %s, type: %v", name, query, sqlTypeHints)
+	stmt, err := c.session.PreparedStatements.NewFromString(ctx, c.executor, name, query, sqlTypeHints)
 	if err != nil {
 		return c.sendError(err)
 	}
@@ -591,7 +598,7 @@ func (c *v3Conn) handleDescribe(ctx context.Context, buf *readBuffer) error {
 			return err
 		}
 
-		return c.sendRowDescription(ctx, stmt.Columns, nil, canSendNoData(stmt.Type))
+		return c.sendRowDescription(ctx, stmt.Columns, nil, canSendNoData(stmt.Statement.StatementType()))
 	case preparePortal:
 		portal, ok := c.session.PreparedPortals.Get(name)
 		if !ok {
@@ -599,7 +606,7 @@ func (c *v3Conn) handleDescribe(ctx context.Context, buf *readBuffer) error {
 		}
 
 		portalMeta := portal.ProtocolMeta.(preparedPortalMeta)
-		return c.sendRowDescription(ctx, portal.Stmt.Columns, portalMeta.outFormats, canSendNoData(portal.Stmt.Type))
+		return c.sendRowDescription(ctx, portal.Stmt.Columns, portalMeta.outFormats, canSendNoData(portal.Stmt.Statement.StatementType()))
 	default:
 		return fmt.Errorf("unknown describe type: %s", typ)
 	}
@@ -784,12 +791,12 @@ func (c *v3Conn) handleExecute(ctx context.Context, buf *readBuffer) error {
 		Values: portal.Qargs,
 	}
 
-	return c.executeStatements(ctx, stmt.Query, &pinfo, portalMeta.outFormats, false, int(limit))
+	return c.executeStatements(ctx, []parser.Statement{stmt.Statement}, &pinfo, portalMeta.outFormats, false, int(limit))
 }
 
 func (c *v3Conn) executeStatements(
 	ctx context.Context,
-	stmts string,
+	stmts []parser.Statement,
 	pinfo *parser.PlaceholderInfo,
 	formatCodes []formatCode,
 	sendDescription bool,
@@ -935,11 +942,11 @@ func (c *v3Conn) sendResponse(
 				row := result.Rows.At(rowIdx)
 				c.writeBuf.initMsg(serverMsgDataRow)
 				c.writeBuf.putInt16(int16(len(row)))
-				for i, col := range row {
+				for _, col := range row {
 					fmtCode := formatText
-					if formatCodes != nil {
-						fmtCode = formatCodes[i]
-					}
+					//if formatCodes != nil {
+					//	fmtCode = formatCodes[i]
+					//}
 					switch fmtCode {
 					case formatText:
 						c.writeBuf.writeTextDatum(col, c.session.Location)
@@ -1006,7 +1013,7 @@ func (c *v3Conn) sendRowDescription(
 	c.writeBuf.initMsg(serverMsgRowDescription)
 	c.writeBuf.putInt16(int16(len(columns)))
 	for i, column := range columns {
-		logger.Infof("pgwire: writing column %s of type: %T", column.Name, column.Typ)
+		logger.Debugf("pgwire: writing column %s of type: %T", column.Name, column.Typ)
 		c.writeBuf.writeTerminatedString(column.Name)
 
 		typ := pgTypeForParserType(column.Typ)

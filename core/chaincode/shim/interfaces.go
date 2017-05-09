@@ -170,3 +170,24 @@ type HistoryQueryIteratorInterface interface {
 type MockQueryIteratorInterface interface {
 	StateQueryIteratorInterface
 }
+
+type SqlQuery struct {
+	Op    string `json:"op"`
+	OpArg []byte `json:"op_arg"`
+}
+
+type SelectQuery struct {
+	Fields  []string `json:"fields"`
+	Tables  []string `json:"tables"`
+	StartID int64    `json:"start_id"`
+	EndID   int64    `json:"end_id"`
+}
+
+type QueryRow map[string]string
+
+type QueryResult struct {
+	QueryOP    string     `json:"query_op"`
+	ContinueID int64      `json:"continue_id"`
+	Cols       []string   `json:"cols"`
+	Rows       []QueryRow `json:"rows"`
+}

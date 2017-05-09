@@ -28,8 +28,9 @@ const (
 
 // SessionArgs contains arguments for creating a new Session with NewSession().
 type SessionArgs struct {
-	Database string
-	User     string
+	Channel   string
+	Namespace string
+	User      string
 }
 
 // txnState contains state associated with an ongoing SQL txn.

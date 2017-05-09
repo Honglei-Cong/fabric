@@ -76,7 +76,7 @@ type Statement interface {
 	// might make sense to pass a tag format specifier.
 	StatementTag() string
 
-	Execute(ledger.QueryExecutor) StatementResults
+	Execute(ledger.QueryExecutor, string) StatementResults
 }
 
 //// StatementType implements the Statement interface.

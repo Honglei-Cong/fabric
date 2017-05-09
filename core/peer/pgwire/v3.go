@@ -30,6 +30,7 @@ import (
 	"github.com/hyperledger/fabric/core/peer/pgwire/pgerror"
 	"github.com/lib/pq/oid"
 	"golang.org/x/net/context"
+	"strings"
 )
 
 //go:generate stringer -type=clientMessageType
@@ -208,8 +209,14 @@ func parseOptions(data []byte) (SessionArgs, error) {
 		}
 		switch key {
 		case "database":
-			args.Database = value
-			logger.Infof("Database: %s", value)
+			db := strings.SplitN(value, ".", 2)
+			if len(db) > 1 {
+				args.Channel = db[0]
+				args.Namespace = db[1]
+				logger.Infof("Database: %s", value)
+			} else {
+				logger.Errorf("Invalid database name: %s", value)
+			}
 		case "user":
 			args.User = value
 			logger.Infof("User: %s", value)

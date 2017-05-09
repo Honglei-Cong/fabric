@@ -29,8 +29,6 @@ import (
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
-	"bytes"
-	"encoding/binary"
 )
 
 type typeAttributeInfo struct {
@@ -48,12 +46,8 @@ type KVObject interface {
 	SetID(id uint64)
 }
 
-func id2String(id uint64) (string, error) {
-	idBuf := new(bytes.Buffer)
-	if err := binary.Write(idBuf, binary.BigEndian, id); err != nil {
-		return "", err
-	}
-	return string(idBuf.Bytes()), nil
+func id2String(id uint64) string {
+	return fmt.Sprintf("%016x", id)
 }
 
 var typeKeyPrefix = byte(0x10)
@@ -127,11 +121,7 @@ func getObjectKVs(stub shim.ChaincodeStubInterface, obj KVObject) (map[string][]
 		return kvs, err
 	}
 
-	objKeyID, err := id2String(objID)
-	if err != nil {
-		return kvs, fmt.Errorf("Failed to convert ID: %s", err)
-	}
-
+	objKeyID := id2String(objID)
 	primKey, err := stub.CreateCompositeKey(typename, []string{objKeyID})
 	if err != nil {
 		return kvs, err
@@ -192,6 +182,15 @@ func CreateObjectType(stub shim.ChaincodeStubInterface, obj KVObject, keys []str
 	return putTypeInfo(stub, typename, typeInfo)
 }
 
+func GetObjectCount(stub shim.ChaincodeStubInterface, obj KVObject) uint64 {
+	typename := getTypeName(obj)
+	typeInfo, err := getTypeInfo(stub, typename)
+	if err != nil {
+		return 0
+	}
+	return typeInfo.NextSeq - 1
+}
+
 func GetObject(stub shim.ChaincodeStubInterface, obj KVObject, keys map[string]string) error {
 	if reflect.TypeOf(obj).Kind() != reflect.Ptr {
 		return errors.New("对象类型不正确. 需要ptr类型.")
@@ -204,11 +203,7 @@ func GetObject(stub shim.ChaincodeStubInterface, obj KVObject, keys map[string]s
 		var k string
 		var err error
 		var valueBytes []byte
-		idKey, err := id2String(obj.GetID())
-		if err != nil {
-			return err
-		}
-		if k, err = stub.CreateCompositeKey(getTypeName(obj), []string{idKey}); err != nil {
+		if k, err = stub.CreateCompositeKey(getTypeName(obj), []string{id2String(obj.GetID())}); err != nil {
 			return err
 		}
 		if valueBytes, err = stub.GetState(k); err != nil {
@@ -321,11 +316,7 @@ func UpdateObject(stub shim.ChaincodeStubInterface, obj KVObject) error {
 	var oldValueBytes, newValueBytes []byte
 	var err error
 
-	idKey, err := id2String(obj.GetID())
-	if err != nil {
-		return err
-	}
-	if k, err = stub.CreateCompositeKey(typename, []string{idKey}); err != nil {
+	if k, err = stub.CreateCompositeKey(typename, []string{id2String(obj.GetID())}); err != nil {
 		return err
 	}
 	if oldValueBytes, err = stub.GetState(k); err != nil {

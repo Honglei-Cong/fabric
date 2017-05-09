@@ -253,6 +253,7 @@ func serve(args []string) error {
 
 	go func() {
 		sqlListenAddr := viper.GetString("peer.psqlListenAddress")
+		logger.Infof("peer psql listening on %v", sqlListenAddr)
 		if len(sqlListenAddr) == 0 {
 			return
 		}
@@ -260,6 +261,7 @@ func serve(args []string) error {
 		ln, err := net.Listen("tcp", sqlListenAddr)
 		if err != nil {
 			logger.Errorf("pgwire listen failed: %s", err)
+			return
 		}
 		defer ln.Close()
 
@@ -282,6 +284,7 @@ func serve(args []string) error {
 				c.Close()
 			}(c)
 		}
+		logger.Infof("peer psql listening done on", sqlListenAddr)
 	}()
 
 	if err := writePid(config.GetPath("peer.fileSystemPath")+"/peer.pid", os.Getpid()); err != nil {

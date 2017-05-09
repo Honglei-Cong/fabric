@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"time"
-
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	pb "github.com/hyperledger/fabric/protos/peer"
 )
@@ -45,13 +43,14 @@ func (t *TestDataCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 		return shim.Error(fmt.Sprintf("invalid counter arg: %s", err))
 	}
 
-	s := time.Now().UnixNano()
+	idx := GetObjectCount(stub, &Person{}) + 1
 
 	for i := 0; i < n; i++ {
 		p := &Person{
-			Name:    fmt.Sprintf("name-%d", s+int64(i)),
-			Address: fmt.Sprintf("address-%d", s+int64(i)),
-			Tel:     fmt.Sprintf("tel-%d", s+int64(i)),
+			ID:      idx+uint64(i),
+			Name:    fmt.Sprintf("name-%d", idx+uint64(i)),
+			Address: fmt.Sprintf("address-%d", idx+uint64(i)),
+			Tel:     fmt.Sprintf("tel-%d", idx+uint64(i)),
 		}
 		if err := PutObject(stub, p); err != nil {
 			return shim.Error(fmt.Sprintf("put new object failed: %s", err))

@@ -36,7 +36,7 @@ func NewUnresolvedAddr(network, addr string) *UnresolvedAddr {
 	}
 }
 
-var TestAddr = NewUnresolvedAddr("tcp", "127.0.0.1:6543")
+var TestAddr = NewUnresolvedAddr("tcp", "127.0.0.1:5432")
 
 func TestConnection(t *testing.T) {
 
@@ -122,7 +122,7 @@ func (q *testQueryExecutor) GetStateRangeScanIterator(namespace string, startKey
 		MaxCount: 10,
 		TestResult: &queryresult.KV{
 			Key:   "test-key",
-			Value: []byte("test-value"),
+			Value: []byte("{\"a\":1, \"b\":\"2\", \"c\":\"3\", \"d\":\"4\"}"),
 		},
 	}, nil
 }
@@ -148,7 +148,7 @@ func TestServer(t *testing.T) {
 	defer c.Close()
 
 	exec := NewExecutor()
-	exec.queryExecutor = &testQueryExecutor{}
+	exec.QueryExecutor = &testQueryExecutor{}
 	server := MakeServer(&Config{}, exec)
 	err = server.ServeConn(context.Background(), c)
 	if err != nil {

@@ -7,7 +7,8 @@ import (
 )
 
 type Executor struct {
-	queryExecutor ledger.QueryExecutor
+	QueryExecutor ledger.QueryExecutor
+	Namespace     string
 }
 
 func NewExecutor() *Executor {
@@ -29,7 +30,7 @@ func (e *Executor) ExecuteStatements(session *Session, stmts string) parser.Stat
 		return res
 	}
 
-	return stmt.Execute(e.queryExecutor)
+	return stmt.Execute(e.QueryExecutor, e.Namespace)
 }
 
 func (e *Executor) Prepare(

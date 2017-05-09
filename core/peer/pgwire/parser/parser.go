@@ -2,7 +2,6 @@ package parser
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/hyperledger/fabric/core/ledger"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"encoding/json"
+	"reflect"
 )
 
 type SelectStatement struct {
@@ -92,40 +93,49 @@ func (sel *SelectStatement) Parse(stmt string) error {
 	return nil
 }
 
-func createKey(table string, id int64) string {
-	const (
-		minUnicodeRuneValue   = 0            //U+0000
-		maxUnicodeRuneValue   = utf8.MaxRune //U+10FFFF - maximum (and unallocated) code point
-		compositeKeyNamespace = "\x00"
-		emptyKeySubstitute    = "\x01"
-	)
+const (
+	minUnicodeRuneValue   = 0            //U+0000
+	maxUnicodeRuneValue   = utf8.MaxRune //U+10FFFF - maximum (and unallocated) code point
+	compositeKeyNamespace = "\x00"
+	emptyKeySubstitute    = "\x01"
+)
 
-	idBuf := new(bytes.Buffer)
-	binary.Write(idBuf, binary.BigEndian, id)
-	return compositeKeyNamespace + table + string(minUnicodeRuneValue) + string(idBuf.Bytes())
+func createKey(table string, id int64) string {
+	return compositeKeyNamespace + table + string(minUnicodeRuneValue) + fmt.Sprintf("%016x", id)
 }
 
-func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
+func (s SelectStatement) Execute(q ledger.QueryExecutor, ns string) StatementResults {
 	var res StatementResults
 
-	numCols := 2
 	Cols := []ResultColumn{
 		{Name: "Key", Typ: TypeString},
-		{Name: "Value", Typ: TypeString},
 	}
-	rowC := NewRowContainer(Cols, 0)
-	row := make([]Datum, numCols)
+	allColsNeeded := false
+	for _, c := range s.Fields {
+		if c == "*" {
+			allColsNeeded = true
+		}
+	}
+	if !allColsNeeded {
+		for _, c := range s.Fields {
+			Cols = append(Cols, ResultColumn{Name: c, Typ: TypeString})
+		}
+	}
+
+	var rowC *RowContainer = nil
+	var row []Datum
 
 	for _, table := range s.Tables {
-		startKey := table
-		endKey := table + string(utf8.MaxRune)
+		keyPrefix := compositeKeyNamespace + table + string(minUnicodeRuneValue)
+		startKey := keyPrefix
+		endKey := compositeKeyNamespace + table + string(utf8.MaxRune)
 		if s.StartID >= 0 {
 			startKey = createKey(table, s.StartID)
 		}
 		if s.EndID >= 0 {
 			endKey = createKey(table, s.EndID)
 		}
-		ite, err := q.GetStateRangeScanIterator(table, startKey, endKey)
+		ite, err := q.GetStateRangeScanIterator(ns, startKey, endKey)
 		if err != nil {
 			continue
 		}
@@ -137,8 +147,49 @@ func (s SelectStatement) Execute(q ledger.QueryExecutor) StatementResults {
 				break
 			}
 
-			row[0] = NewDString(kv.(*queryresult.KV).Key)
-			row[1] = NewDString(string(kv.(*queryresult.KV).Value))
+			if row == nil {
+				if allColsNeeded {
+					m := make(map[string]interface{})
+					err := json.Unmarshal(kv.(*queryresult.KV).Value, &m)
+					if err != nil {
+						fmt.Printf("Failed to unmarshal %v, err: %s\n", string(kv.(*queryresult.KV).Value), err)
+					}
+
+					for k := range m {
+						Cols = append(Cols, ResultColumn{Name: k, Typ: TypeString})
+					}
+				}
+
+				row = make([]Datum, len(Cols))
+				rowC = NewRowContainer(Cols, 0)
+			}
+
+			row[0] = NewDString(strings.TrimLeft(kv.(*queryresult.KV).Key, keyPrefix))
+
+			m := make(map[string]interface{})
+			err = json.Unmarshal(kv.(*queryresult.KV).Value, &m)
+			if err != nil {
+				fmt.Printf("Failed to unmarshal value %v, err: %s\n", string(kv.(*queryresult.KV).Value), err)
+			}
+
+			for i := 1; i < len(Cols); i++ {
+				v, avail := m[Cols[i].Name]
+				if avail {
+					switch v := v.(type) {
+					case string:
+						row[i] = NewDString(v)
+					case int64, uint64, int, uint:
+						row[i] = NewDString(fmt.Sprintf("%d", v))
+					case float64:
+						row[i] = NewDString(fmt.Sprintf("%d", uint64(v)))
+					default:
+						row[i] = NewDString(fmt.Sprintf("type: %s", reflect.TypeOf(v).Name()))
+					}
+				} else {
+					row[i] = NewDString("null")
+				}
+			}
+
 			rowC.AddRow(row)
 		}
 		ite.Close()

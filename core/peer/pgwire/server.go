@@ -45,7 +45,9 @@ const (
 	// which is not accepting client connections.
 	ErrDraining = "server is not accepting clients"
 
-	ErrFailedtoFoundDatabase = "Failed to found database"
+	ErrFailedGetDatabaseName = "Failed to get database name"
+
+	ErrFailedFoundDatabase = "Failed to found database"
 )
 
 const (
@@ -322,12 +324,17 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 			return v3conn.sendInternalError(err.Error())
 		}
 
-		if s.executor.queryExecutor == nil {
-			lgr := peer.GetLedger(v3conn.sessionArgs.Database)
-			if lgr == nil {
-				return v3conn.sendError(errors.New(ErrFailedtoFoundDatabase))
+		if s.executor.QueryExecutor == nil {
+			if len(v3conn.sessionArgs.Channel) == 0 || len(v3conn.sessionArgs.Namespace) == 0 {
+				return v3conn.sendError(errors.New(ErrFailedGetDatabaseName))
 			}
-			s.executor.queryExecutor, err = lgr.NewQueryExecutor()
+
+			lgr := peer.GetLedger(v3conn.sessionArgs.Channel)
+			if lgr == nil {
+				return v3conn.sendError(errors.New(ErrFailedFoundDatabase))
+			}
+			s.executor.Namespace = v3conn.sessionArgs.Namespace
+			s.executor.QueryExecutor, err = lgr.NewQueryExecutor()
 			if err != nil {
 				return v3conn.sendInternalError(err.Error())
 			}

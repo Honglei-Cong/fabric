@@ -26,8 +26,8 @@ import (
 
 	"errors"
 	"github.com/hyperledger/fabric/core/ledger"
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
-	"github.com/hyperledger/fabric/core/peer/pgwire/pgerror"
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
+	"github.com/hyperledger/fabric/peer/pgwire/pgerror"
 	"github.com/lib/pq/oid"
 	"golang.org/x/net/context"
 	"strings"

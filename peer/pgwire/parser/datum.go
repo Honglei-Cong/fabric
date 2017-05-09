@@ -27,10 +27,11 @@ import (
 	"unicode"
 	"unsafe"
 
-	"github.com/hyperledger/fabric/core/peer/pgwire/util/duration"
-	"github.com/lib/pq/oid"
-	"github.com/hyperledger/fabric/core/peer/pgwire/util/roachpb"
 	"errors"
+
+	"github.com/hyperledger/fabric/peer/pgwire/util/duration"
+	"github.com/hyperledger/fabric/peer/pgwire/util/roachpb"
+	"github.com/lib/pq/oid"
 )
 
 var (

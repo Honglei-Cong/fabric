@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hyperledger/fabric/core/peer/pgwire/util/duration"
+	"github.com/hyperledger/fabric/peer/pgwire/util/duration"
 )
 
 type intervalLexer struct {

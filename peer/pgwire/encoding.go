@@ -23,7 +23,8 @@ import (
 	"fmt"
 	"io"
 	"unsafe"
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
+
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
 )
 
 const maxMessageSize = 1 << 24

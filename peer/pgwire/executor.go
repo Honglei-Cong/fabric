@@ -1,9 +1,10 @@
 package pgwire
 
 import (
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
 	"fmt"
+
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
 )
 
 type Executor struct {
@@ -34,8 +35,7 @@ func (e *Executor) ExecuteStatements(session *Session, stmts string) parser.Stat
 }
 
 func (e *Executor) Prepare(
-query string, session *Session, pinfo parser.PlaceholderTypes,
+	query string, session *Session, pinfo parser.PlaceholderTypes,
 ) (*PreparedStatement, error) {
 	return nil, nil
 }
-

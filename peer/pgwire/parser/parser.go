@@ -2,16 +2,17 @@ package parser
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hyperledger/fabric/core/ledger"
-	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
-	"encoding/json"
-	"reflect"
+
+	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/protos/ledger/queryresult"
 )
 
 type SelectStatement struct {

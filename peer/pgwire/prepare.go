@@ -1,7 +1,7 @@
 package pgwire
 
 import (
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
 	"context"
 )
 

@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hyperledger/fabric/core/peer/pgwire/util/duration"
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
+	"github.com/hyperledger/fabric/peer/pgwire/util/duration"
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
 	"github.com/lib/pq"
 	"github.com/lib/pq/oid"
 	"fmt"

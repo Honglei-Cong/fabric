@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hyperledger/fabric/core/peer/pgwire/syncutil"
+	"github.com/hyperledger/fabric/peer/pgwire/syncutil"
 )
 
 type envVarInfo struct {

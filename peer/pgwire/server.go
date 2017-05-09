@@ -27,10 +27,10 @@ import (
 	"fmt"
 
 	"github.com/hyperledger/fabric/core/peer"
-	"github.com/hyperledger/fabric/core/peer/pgwire/envutil"
-	"github.com/hyperledger/fabric/core/peer/pgwire/parser"
-	"github.com/hyperledger/fabric/core/peer/pgwire/pgerror"
-	"github.com/hyperledger/fabric/core/peer/pgwire/syncutil"
+	"github.com/hyperledger/fabric/peer/pgwire/envutil"
+	"github.com/hyperledger/fabric/peer/pgwire/parser"
+	"github.com/hyperledger/fabric/peer/pgwire/pgerror"
+	"github.com/hyperledger/fabric/peer/pgwire/syncutil"
 	"github.com/op/go-logging"
 )
 

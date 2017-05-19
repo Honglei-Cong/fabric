@@ -18,23 +18,43 @@ package shim
 
 import (
 	"bytes"
+	"crypto/x509"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hyperledger/fabric/common/flogging"
 	mockpeer "github.com/hyperledger/fabric/common/mocks/peer"
 	"github.com/hyperledger/fabric/common/util"
+	mspmgmt "github.com/hyperledger/fabric/msp/mgmt"
+	"github.com/hyperledger/fabric/msp/mgmt/testtools"
+	pcommon "github.com/hyperledger/fabric/protos/common"
 	lproto "github.com/hyperledger/fabric/protos/ledger/queryresult"
 	pb "github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/utils"
-
-	"github.com/hyperledger/fabric/common/flogging"
+	putils "github.com/hyperledger/fabric/protos/utils"
 	"github.com/op/go-logging"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
+
+var once sync.Once
+
+// InitMSP init MSP
+func InitMSP() {
+	once.Do(initMSP)
+}
+
+func initMSP() {
+	err := msptesttools.LoadMSPSetupForTesting()
+	if err != nil {
+		panic(fmt.Errorf("Fatal error when reading MSP config: %s\n", err))
+	}
+}
 
 // shimTestCC example simple Chaincode implementation
 type shimTestCC struct {
@@ -897,4 +917,44 @@ func TestCC2CC(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 	peerSide.Quit()
+}
+
+func Test_ShimGetCreator(t *testing.T) {
+	InitMSP()
+
+	signer, err := mspmgmt.GetLocalMSP().GetDefaultSigningIdentity()
+	assert.NoError(t, err)
+
+	cID := "test_channel"
+	spec := &pb.ChaincodeSpec{
+		Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_GOLANG),
+		ChaincodeId: &pb.ChaincodeID{Path: "test-chaincode-path", Name: "test-cc-name", Version: "test-ver"},
+		Input:       &pb.ChaincodeInput{},
+	}
+
+	invocation := &pb.ChaincodeInvocationSpec{ChaincodeSpec: spec}
+	creatorBytes, err := signer.Serialize()
+	assert.NoError(t, err)
+
+	prop, _, err := putils.CreateProposalFromCIS(pcommon.HeaderType_ENDORSER_TRANSACTION, cID, invocation, creatorBytes)
+	signedProp, err := putils.GetSignedProposal(prop, signer)
+
+	stub := &ChaincodeStub{}
+	err = stub.init(nil, "", &pb.ChaincodeInput{Args: [][]byte{}}, signedProp)
+	assert.NoError(t, err)
+
+	// verify creator
+	creatorID, err := stub.GetCreatorID()
+	assert.NoError(t, err)
+	assert.Equal(t, creatorID, signer.GetMSPIdentifier())
+
+	// verify cert
+	creatorCert, err := stub.GetCreatorCert()
+	assert.NoError(t, err)
+
+	msg := []byte("test-msg")
+	sig, err := signer.Sign(msg)
+	assert.NoError(t, err)
+	err = creatorCert.CheckSignature(x509.ECDSAWithSHA256, msg, sig)
+	assert.NoError(t, err)
 }

@@ -20,6 +20,7 @@ package shim
 
 import (
 	"container/list"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"strings"
@@ -278,8 +279,13 @@ func (stub *MockStub) InvokeChaincode(chaincodeName string, args [][]byte, chann
 }
 
 // Not implemented
-func (stub *MockStub) GetCreator() ([]byte, error) {
-	return nil, nil
+func (stub *MockStub) GetCreatorID() (string, error) {
+	return "", errors.New("Not implemented")
+}
+
+// Not implemented
+func (stub *MockStub) GetCreatorCert() (*x509.Certificate, error) {
+	return nil, errors.New("Not implemented")
 }
 
 // Not implemented

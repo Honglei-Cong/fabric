@@ -17,8 +17,9 @@ limitations under the License.
 package shim
 
 import (
-	"github.com/golang/protobuf/ptypes/timestamp"
+	"crypto/x509"
 
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
 	pb "github.com/hyperledger/fabric/protos/peer"
 )
@@ -102,9 +103,13 @@ type ChaincodeStubInterface interface {
 	// key values across time. GetHistoryForKey is intended to be used for read-only queries.
 	GetHistoryForKey(key string) (HistoryQueryIteratorInterface, error)
 
-	// GetCreator returns SignatureHeader.Creator of the signedProposal
+	// GetCreatorID returns ID of the Creator of the signedProposal
 	// this Stub refers to.
-	GetCreator() ([]byte, error)
+	GetCreatorID() (string, error)
+
+	// GetCreatorCert returns x509 Cert of the Creator of the signedProposal
+	// this Stub refers to.
+	GetCreatorCert() (*x509.Certificate, error)
 
 	// GetTransient returns the ChaincodeProposalPayload.transient field.
 	// It is a map that contains data (e.g. cryptographic material)

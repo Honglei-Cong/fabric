@@ -19,6 +19,8 @@ limitations under the License.
 package shim
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,6 +36,7 @@ import (
 	commonledger "github.com/hyperledger/fabric/common/ledger"
 	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+	pbmsp "github.com/hyperledger/fabric/protos/msp"
 	pb "github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/op/go-logging"
@@ -686,10 +689,30 @@ func (stub *ChaincodeStub) GetFunctionAndParameters() (function string, params [
 	return
 }
 
-// GetCreator returns SignatureHeader.Creator of the signedProposal
+// GetCreatorID returns MSPID of the creator of the signedProposal
 // this Stub refers to.
-func (stub *ChaincodeStub) GetCreator() ([]byte, error) {
-	return stub.creator, nil
+func (stub *ChaincodeStub) GetCreatorID() (string, error) {
+	sid := &pbmsp.SerializedIdentity{}
+	if err := proto.Unmarshal(stub.creator, sid); err != nil {
+		return "", err
+	}
+
+	return sid.Mspid, nil
+}
+
+// GetCreatorCert returns Cert of the Creator of the signedProposal
+// this Stub refers to.
+func (stub *ChaincodeStub) GetCreatorCert() (*x509.Certificate, error) {
+	sid := &pbmsp.SerializedIdentity{}
+	if err := proto.Unmarshal(stub.creator, sid); err != nil {
+		return nil, err
+	}
+
+	p, _ := pem.Decode(sid.IdBytes)
+	if p != nil {
+		return x509.ParseCertificate(p.Bytes)
+	}
+	return nil, errors.New("Cert decoding failed")
 }
 
 // GetTransient returns the ChaincodeProposalPayload.transient field.

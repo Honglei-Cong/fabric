@@ -27,6 +27,7 @@ import (
 	"github.com/hyperledger/fabric/core/container/ccintf"
 	"github.com/hyperledger/fabric/core/container/dockercontroller"
 	"github.com/hyperledger/fabric/core/container/inproccontroller"
+	"github.com/hyperledger/fabric/core/container/interpretercontroller"
 )
 
 type refCountedLock struct {
@@ -51,6 +52,7 @@ var vmcontroller *VMController
 const (
 	DOCKER = "Docker"
 	SYSTEM = "System"
+	INTERPRETER = "Interpreter"
 )
 
 //NewVMController - creates/returns singleton
@@ -69,6 +71,8 @@ func (vmc *VMController) newVM(typ string) api.VM {
 		v = dockercontroller.NewDockerVM()
 	case SYSTEM:
 		v = &inproccontroller.InprocVM{}
+	case INTERPRETER:
+		v = &interpretercontroller.InterpreterVM{}
 	default:
 		v = &dockercontroller.DockerVM{}
 	}

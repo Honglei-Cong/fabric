@@ -67,7 +67,11 @@ func getChaincodeDeploymentSpec(spec *pb.ChaincodeSpec, crtPkg bool) (*pb.Chainc
 			return nil, err
 		}
 	}
-	chaincodeDeploymentSpec := &pb.ChaincodeDeploymentSpec{ChaincodeSpec: spec, CodePackage: codePackageBytes}
+	execEnv := pb.ChaincodeDeploymentSpec_DOCKER
+	if spec.Type == pb.ChaincodeSpec_JAVASCRIPT {
+		execEnv = pb.ChaincodeDeploymentSpec_INTERPRETER
+	}
+	chaincodeDeploymentSpec := &pb.ChaincodeDeploymentSpec{ChaincodeSpec: spec, CodePackage: codePackageBytes, ExecEnv: execEnv}
 	return chaincodeDeploymentSpec, nil
 }
 

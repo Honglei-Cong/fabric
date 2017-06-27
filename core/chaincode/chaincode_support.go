@@ -378,7 +378,7 @@ func (chaincodeSupport *ChaincodeSupport) getArgsAndEnv(cccid *ccprovider.CCCont
 		envs = append(envs, "CORE_CHAINCODE_LOGGING_FORMAT="+chaincodeSupport.logFormat)
 	}
 	switch cLang {
-	case pb.ChaincodeSpec_GOLANG, pb.ChaincodeSpec_CAR:
+	case pb.ChaincodeSpec_GOLANG, pb.ChaincodeSpec_CAR, pb.ChaincodeSpec_JAVASCRIPT:
 		args = []string{"chaincode", fmt.Sprintf("-peer.address=%s", chaincodeSupport.peerAddress)}
 	case pb.ChaincodeSpec_JAVA:
 		args = []string{"java", "-jar", "chaincode.jar", "--peerAddress", chaincodeSupport.peerAddress}
@@ -627,6 +627,8 @@ func (chaincodeSupport *ChaincodeSupport) Launch(context context.Context, cccid 
 func (chaincodeSupport *ChaincodeSupport) getVMType(cds *pb.ChaincodeDeploymentSpec) (string, error) {
 	if cds.ExecEnv == pb.ChaincodeDeploymentSpec_SYSTEM {
 		return container.SYSTEM, nil
+	} else if cds.ExecEnv == pb.ChaincodeDeploymentSpec_INTERPRETER {
+		return container.INTERPRETER, nil
 	}
 	return container.DOCKER, nil
 }

@@ -17,6 +17,9 @@ limitations under the License.
 package blocksprovider
 
 import (
+	"math"
+	"time"
+
 	"sync/atomic"
 
 	"github.com/golang/protobuf/proto"
@@ -79,6 +82,9 @@ type streamClient interface {
 
 	// Close closes the stream and its underlying connection
 	Close()
+
+	// Disconnect disconnects from the remote node
+	Disconnect()
 }
 
 // blocksProviderImpl the actual implementation for BlocksProvider interface
@@ -92,7 +98,13 @@ type blocksProviderImpl struct {
 	mcs api.MessageCryptoService
 
 	done int32
+
+	wrongStatusThreshold int
 }
+
+const wrongStatusThreshold = 10
+
+var MaxRetryDelay = time.Second * 10
 
 var logger *logging.Logger // package-level logger
 
@@ -103,40 +115,63 @@ func init() {
 // NewBlocksProvider constructor function to create blocks deliverer instance
 func NewBlocksProvider(chainID string, client streamClient, gossip GossipServiceAdapter, mcs api.MessageCryptoService) BlocksProvider {
 	return &blocksProviderImpl{
-		chainID: chainID,
-		client:  client,
-		gossip:  gossip,
-		mcs:     mcs,
+		chainID:              chainID,
+		client:               client,
+		gossip:               gossip,
+		mcs:                  mcs,
+		wrongStatusThreshold: wrongStatusThreshold,
 	}
 }
 
 // DeliverBlocks used to pull out blocks from the ordering service to
 // distributed them across peers
 func (b *blocksProviderImpl) DeliverBlocks() {
+	errorStatusCounter := 0
+	statusCounter := 0
 	defer b.client.Close()
 	for !b.isDone() {
 		msg, err := b.client.Recv()
 		if err != nil {
-			logger.Warningf("Receive error: %s", err.Error())
+			logger.Warningf("[%s] Receive error: %s", b.chainID, err.Error())
 			return
 		}
 		switch t := msg.Type.(type) {
 		case *orderer.DeliverResponse_Status:
 			if t.Status == common.Status_SUCCESS {
-				logger.Warning("ERROR! Received success for a seek that should never complete")
+				logger.Warningf("[%s] ERROR! Received success for a seek that should never complete", b.chainID)
 				return
 			}
-			logger.Warning("Got error ", t)
+			if t.Status == common.Status_BAD_REQUEST || t.Status == common.Status_FORBIDDEN {
+				logger.Errorf("[%s] Got error %v", b.chainID, t)
+				errorStatusCounter++
+				if errorStatusCounter > b.wrongStatusThreshold {
+					logger.Criticalf("[%s] Wrong statuses threshold passed, stopping block provider", b.chainID)
+					return
+				}
+			} else {
+				errorStatusCounter = 0
+				logger.Warningf("[%s] Got error %v", b.chainID, t)
+			}
+			maxDelay := float64(MaxRetryDelay)
+			currDelay := float64(time.Duration(math.Pow(2, float64(statusCounter))) * 100 * time.Millisecond)
+			time.Sleep(time.Duration(math.Min(maxDelay, currDelay)))
+			if currDelay < maxDelay {
+				statusCounter++
+			}
+			b.client.Disconnect()
+			continue
 		case *orderer.DeliverResponse_Block:
+			errorStatusCounter = 0
+			statusCounter = 0
 			seqNum := t.Block.Header.Number
 
 			marshaledBlock, err := proto.Marshal(t.Block)
 			if err != nil {
-				logger.Errorf("Error serializing block with sequence number %d, due to %s", seqNum, err)
+				logger.Errorf("[%s] Error serializing block with sequence number %d, due to %s", b.chainID, seqNum, err)
 				continue
 			}
 			if err := b.mcs.VerifyBlock(gossipcommon.ChainID(b.chainID), seqNum, marshaledBlock); err != nil {
-				logger.Errorf("Error verifying block with sequnce number %d, due to %s", seqNum, err)
+				logger.Errorf("[%s] Error verifying block with sequnce number %d, due to %s", b.chainID, seqNum, err)
 				continue
 			}
 
@@ -146,15 +181,17 @@ func (b *blocksProviderImpl) DeliverBlocks() {
 			// Use payload to create gossip message
 			gossipMsg := createGossipMsg(b.chainID, payload)
 
-			logger.Debugf("Adding payload locally, buffer seqNum = [%d], peers number [%d]", seqNum, numberOfPeers)
+			logger.Debugf("[%s] Adding payload locally, buffer seqNum = [%d], peers number [%d]", b.chainID, seqNum, numberOfPeers)
 			// Add payload to local state payloads buffer
-			b.gossip.AddPayload(b.chainID, payload)
+			if err := b.gossip.AddPayload(b.chainID, payload); err != nil {
+				logger.Warning("Failed adding payload of", seqNum, "because:", err)
+			}
 
 			// Gossip messages with other nodes
-			logger.Debugf("Gossiping block [%d], peers number [%d]", seqNum, numberOfPeers)
+			logger.Debugf("[%s] Gossiping block [%d], peers number [%d]", b.chainID, seqNum, numberOfPeers)
 			b.gossip.Gossip(gossipMsg)
 		default:
-			logger.Warning("Received unknown: ", t)
+			logger.Warningf("[%s] Received unknown: ", b.chainID, t)
 			return
 		}
 	}

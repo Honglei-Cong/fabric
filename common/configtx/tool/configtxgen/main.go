@@ -22,11 +22,14 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"strings"
 
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/config"
 	mspconfig "github.com/hyperledger/fabric/common/config/msp"
 	"github.com/hyperledger/fabric/common/configtx"
+	"github.com/hyperledger/fabric/common/configtx/tool/configtxgen/metadata"
 	genesisconfig "github.com/hyperledger/fabric/common/configtx/tool/localconfig"
 	"github.com/hyperledger/fabric/common/configtx/tool/provisional"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -35,15 +38,22 @@ import (
 	"github.com/hyperledger/fabric/protos/utils"
 
 	"github.com/golang/protobuf/proto"
-	mmsp "github.com/hyperledger/fabric/common/mocks/msp"
 	logging "github.com/op/go-logging"
 )
+
+var exitCode = 0
 
 var logger = flogging.MustGetLogger("common/configtx/tool")
 
 func doOutputBlock(config *genesisconfig.Profile, channelID string, outputBlock string) error {
 	pgen := provisional.New(config)
 	logger.Info("Generating genesis block")
+	if config.Orderer == nil {
+		return fmt.Errorf("config does not contain an Orderers section, necessary for all config blocks, aborting")
+	}
+	if config.Consortiums == nil {
+		logger.Warning("Genesis block does not contain a consortiums group definition.  This block cannot be used for orderer bootstrap.")
+	}
 	genesisBlock := pgen.GenesisBlockForChannel(channelID)
 	logger.Info("Writing genesis block")
 	err := ioutil.WriteFile(outputBlock, utils.MarshalOrPanic(genesisBlock), 0644)
@@ -55,10 +65,13 @@ func doOutputBlock(config *genesisconfig.Profile, channelID string, outputBlock 
 
 func doOutputChannelCreateTx(conf *genesisconfig.Profile, channelID string, outputChannelCreateTx string) error {
 	logger.Info("Generating new channel configtx")
-	// TODO, use actual MSP eventually
-	signer, err := mmsp.NewNoopMsp().GetDefaultSigningIdentity()
-	if err != nil {
-		return fmt.Errorf("Error getting signing identity: %s", err)
+
+	if conf.Application == nil {
+		return fmt.Errorf("Cannot define a new channel with no Application section")
+	}
+
+	if conf.Consortium == "" {
+		return fmt.Errorf("Cannot define a new channel with no Consortium value")
 	}
 
 	// XXX we ignore the non-application org names here, once the tool supports configuration updates
@@ -68,7 +81,7 @@ func doOutputChannelCreateTx(conf *genesisconfig.Profile, channelID string, outp
 	for _, org := range conf.Application.Organizations {
 		orgNames = append(orgNames, org.Name)
 	}
-	configtx, err := configtx.MakeChainCreationTransaction(channelID, conf.Consortium, signer, orgNames...)
+	configtx, err := configtx.MakeChainCreationTransaction(channelID, conf.Consortium, nil, orgNames...)
 	if err != nil {
 		return fmt.Errorf("Error generating configtx: %s", err)
 	}
@@ -86,6 +99,10 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 		return fmt.Errorf("Must specify an organization to update the anchor peer for")
 	}
 
+	if conf.Application == nil {
+		return fmt.Errorf("Cannot update anchor peers without an application section")
+	}
+
 	var org *genesisconfig.Organization
 	for _, iorg := range conf.Application.Organizations {
 		if iorg.Name == asOrg {
@@ -94,7 +111,7 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 	}
 
 	if org == nil {
-		return fmt.Errorf("No org matching: %s", asOrg)
+		return fmt.Errorf("No organization name matching: %s", asOrg)
 	}
 
 	anchorPeers := make([]*pb.AnchorPeer, len(org.AnchorPeers))
@@ -106,6 +123,7 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 	}
 
 	configGroup := config.TemplateAnchorPeers(org.Name, anchorPeers)
+	configGroup.Groups[config.ApplicationGroupKey].Groups[org.Name].Values[config.AnchorPeersKey].ModPolicy = mspconfig.AdminsPolicyKey
 	configUpdate := &cb.ConfigUpdate{
 		ChannelId: channelID,
 		WriteSet:  configGroup,
@@ -115,6 +133,7 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 	// Add all the existing config to the readset
 	configUpdate.ReadSet.Groups[config.ApplicationGroupKey] = cb.NewConfigGroup()
 	configUpdate.ReadSet.Groups[config.ApplicationGroupKey].Version = 1
+	configUpdate.ReadSet.Groups[config.ApplicationGroupKey].ModPolicy = mspconfig.AdminsPolicyKey
 	configUpdate.ReadSet.Groups[config.ApplicationGroupKey].Groups[org.Name] = cb.NewConfigGroup()
 	configUpdate.ReadSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Values[config.MSPKey] = &cb.ConfigValue{}
 	configUpdate.ReadSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Policies[mspconfig.ReadersPolicyKey] = &cb.ConfigPolicy{}
@@ -123,7 +142,9 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 
 	// Add all the existing at the same versions to the writeset
 	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Version = 1
+	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].ModPolicy = mspconfig.AdminsPolicyKey
 	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Version = 1
+	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Groups[org.Name].ModPolicy = mspconfig.AdminsPolicyKey
 	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Values[config.MSPKey] = &cb.ConfigValue{}
 	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Policies[mspconfig.ReadersPolicyKey] = &cb.ConfigPolicy{}
 	configUpdate.WriteSet.Groups[config.ApplicationGroupKey].Groups[org.Name].Policies[mspconfig.WritersPolicyKey] = &cb.ConfigPolicy{}
@@ -156,6 +177,10 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 func doInspectBlock(inspectBlock string) error {
 	logger.Info("Inspecting block")
 	data, err := ioutil.ReadFile(inspectBlock)
+	if err != nil {
+		return fmt.Errorf("Could not read block %s", inspectBlock)
+	}
+
 	logger.Info("Parsing genesis block")
 	block := &cb.Block{}
 	err = proto.Unmarshal(data, block)
@@ -223,6 +248,10 @@ func configGroupAsJSON(group *cb.ConfigGroup) (string, error) {
 func doInspectChannelCreateTx(inspectChannelCreateTx string) error {
 	logger.Info("Inspecting transaction")
 	data, err := ioutil.ReadFile(inspectChannelCreateTx)
+	if err != nil {
+		return fmt.Errorf("could not read channel create tx: %s", err)
+	}
+
 	logger.Info("Parsing transaction")
 	env, err := utils.UnmarshalEnvelope(data)
 	if err != nil {
@@ -317,11 +346,31 @@ func main() {
 	flag.StringVar(&inspectBlock, "inspectBlock", "", "Prints the configuration contained in the block at the specified path")
 	flag.StringVar(&inspectChannelCreateTx, "inspectChannelCreateTx", "", "Prints the configuration contained in the transaction at the specified path")
 	flag.StringVar(&outputAnchorPeersUpdate, "outputAnchorPeersUpdate", "", "Creates an config update to update an anchor peer (works only with the default channel creation, and only for the first update)")
-	flag.StringVar(&asOrg, "asOrg", "", "Performs the config generation as a particular organization, only including values in the write set that org (likely) has privilege to set")
+	flag.StringVar(&asOrg, "asOrg", "", "Performs the config generation as a particular organization (by name), only including values in the write set that org (likely) has privilege to set")
+
+	version := flag.Bool("version", false, "Show version information")
 
 	flag.Parse()
 
+	// show version
+	if *version {
+		printVersion()
+		os.Exit(exitCode)
+	}
+
 	logging.SetLevel(logging.INFO, "")
+
+	// don't need to panic when running via command line
+	defer func() {
+		if err := recover(); err != nil {
+			if strings.Contains(fmt.Sprint(err), "Error reading configuration: Unsupported Config Type") {
+				logger.Error("Could not find configtx.yaml. " +
+					"Please make sure that FABRIC_CFG_PATH is set to a path " +
+					"which contains configtx.yaml")
+			}
+			os.Exit(1)
+		}
+	}()
 
 	logger.Info("Loading configuration")
 	factory.InitFactories(nil)
@@ -356,4 +405,8 @@ func main() {
 			logger.Fatalf("Error on inspectChannelCreateTx: %s", err)
 		}
 	}
+}
+
+func printVersion() {
+	fmt.Println(metadata.GetVersionInfo())
 }

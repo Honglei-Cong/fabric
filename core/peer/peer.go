@@ -1,17 +1,7 @@
 /*
-Copyright IBM Corp. 2016 All Rights Reserved.
+Copyright IBM Corp. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-		 http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: Apache-2.0
 */
 
 package peer
@@ -22,7 +12,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/config"
 	"github.com/hyperledger/fabric/common/configtx"
 	configtxapi "github.com/hyperledger/fabric/common/configtx/api"
@@ -41,7 +30,6 @@ import (
 	"github.com/hyperledger/fabric/msp"
 	mspmgmt "github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protos/common"
-	mspprotos "github.com/hyperledger/fabric/protos/msp"
 	pb "github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/spf13/viper"
@@ -185,9 +173,14 @@ func createChain(cid string, ledger ledger.PeerLedger, cb *common.Block) error {
 	gossipEventer := service.GetGossipService().NewConfigEventer()
 
 	gossipCallbackWrapper := func(cm configtxapi.Manager) {
+		ac, ok := configtxInitializer.ApplicationConfig()
+		if !ok {
+			// TODO, handle a missing ApplicationConfig more gracefully
+			ac = nil
+		}
 		gossipEventer.ProcessConfigUpdate(&chainSupport{
 			Manager:     cm,
-			Application: configtxInitializer.ApplicationConfig(),
+			Application: ac,
 		})
 		service.GetGossipService().SuspectPeers(func(identity api.PeerIdentityType) bool {
 			// TODO: this is a place-holder that would somehow make the MSP layer suspect
@@ -214,16 +207,27 @@ func createChain(cid string, ledger ledger.PeerLedger, cb *common.Block) error {
 	// TODO remove once all references to mspmgmt are gone from peer code
 	mspmgmt.XXXSetMSPManager(cid, configtxManager.MSPManager())
 
+	ac, ok := configtxInitializer.ApplicationConfig()
+	if !ok {
+		ac = nil
+	}
 	cs := &chainSupport{
 		Manager:     configtxManager,
-		Application: configtxManager.ApplicationConfig(), // TODO, refactor as this is accessible through Manager
+		Application: ac, // TODO, refactor as this is accessible through Manager
 		ledger:      ledger,
 	}
 
-	c := committer.NewLedgerCommitter(ledger, txvalidator.NewTxValidator(cs))
+	c := committer.NewLedgerCommitterReactive(ledger, txvalidator.NewTxValidator(cs), func(block *common.Block) error {
+		chainID, err := utils.GetChainIDFromBlock(block)
+		if err != nil {
+			return err
+		}
+		return SetCurrConfigBlock(block, chainID)
+	})
+
 	ordererAddresses := configtxManager.ChannelConfig().OrdererAddresses()
 	if len(ordererAddresses) == 0 {
-		return errors.New("No orderering service endpoint provided in configuration block")
+		return errors.New("No ordering service endpoint provided in configuration block")
 	}
 	service.GetGossipService().InitializeChannel(cs.ChainID(), c, ordererAddresses)
 
@@ -378,11 +382,14 @@ func buildTrustedRootsForChain(cm configtxapi.Manager) {
 	appRootCAs := [][]byte{}
 	ordererRootCAs := [][]byte{}
 	appOrgMSPs := make(map[string]struct{})
-
-	//loop through app orgs and build map of MSPIDs
-	for _, appOrg := range cm.ApplicationConfig().Organizations() {
-		appOrgMSPs[appOrg.MSPID()] = struct{}{}
+	ac, ok := cm.ApplicationConfig()
+	if ok {
+		//loop through app orgs and build map of MSPIDs
+		for _, appOrg := range ac.Organizations() {
+			appOrgMSPs[appOrg.MSPID()] = struct{}{}
+		}
 	}
+
 	cid := cm.ChainID()
 	peerLogger.Debugf("updating root CAs for channel [%s]", cid)
 	msps, err := cm.MSPManager().GetMSPs()
@@ -393,38 +400,24 @@ func buildTrustedRootsForChain(cm configtxapi.Manager) {
 		for k, v := range msps {
 			// check to see if this is a FABRIC MSP
 			if v.GetType() == msp.FABRIC {
-				for _, root := range v.GetRootCerts() {
-					sid, err := root.Serialize()
-					if err == nil {
-						id := &mspprotos.SerializedIdentity{}
-						err = proto.Unmarshal(sid, id)
-						if err == nil {
-							// check to see of this is an app org MSP
-							if _, ok := appOrgMSPs[k]; ok {
-								peerLogger.Debugf("adding app root CAs for MSP [%s]", k)
-								appRootCAs = append(appRootCAs, id.IdBytes)
-							} else {
-								peerLogger.Debugf("adding orderer root CAs for MSP [%s]", k)
-								ordererRootCAs = append(ordererRootCAs, id.IdBytes)
-							}
-						}
+				for _, root := range v.GetTLSRootCerts() {
+					// check to see of this is an app org MSP
+					if _, ok := appOrgMSPs[k]; ok {
+						peerLogger.Debugf("adding app root CAs for MSP [%s]", k)
+						appRootCAs = append(appRootCAs, root)
+					} else {
+						peerLogger.Debugf("adding orderer root CAs for MSP [%s]", k)
+						ordererRootCAs = append(ordererRootCAs, root)
 					}
 				}
-				for _, intermediate := range v.GetIntermediateCerts() {
-					sid, err := intermediate.Serialize()
-					if err == nil {
-						id := &mspprotos.SerializedIdentity{}
-						err = proto.Unmarshal(sid, id)
-						if err == nil {
-							// check to see of this is an app org MSP
-							if _, ok := appOrgMSPs[k]; ok {
-								peerLogger.Debugf("adding app root CAs for MSP [%s]", k)
-								appRootCAs = append(appRootCAs, id.IdBytes)
-							} else {
-								peerLogger.Debugf("adding orderer root CAs for MSP [%s]", k)
-								ordererRootCAs = append(ordererRootCAs, id.IdBytes)
-							}
-						}
+				for _, intermediate := range v.GetTLSIntermediateCerts() {
+					// check to see of this is an app org MSP
+					if _, ok := appOrgMSPs[k]; ok {
+						peerLogger.Debugf("adding app root CAs for MSP [%s]", k)
+						appRootCAs = append(appRootCAs, intermediate)
+					} else {
+						peerLogger.Debugf("adding orderer root CAs for MSP [%s]", k)
+						ordererRootCAs = append(ordererRootCAs, intermediate)
 					}
 				}
 			}
@@ -445,13 +438,15 @@ func GetMSPIDs(cid string) []string {
 		return mockMSPIDGetter(cid)
 	}
 	if c, ok := chains.list[cid]; ok {
-		if c == nil || c.cs == nil ||
-			c.cs.ApplicationConfig() == nil ||
-			c.cs.ApplicationConfig().Organizations() == nil {
+		if c == nil || c.cs == nil {
+			return nil
+		}
+		ac, ok := c.cs.ApplicationConfig()
+		if !ok || ac.Organizations() == nil {
 			return nil
 		}
 
-		orgs := c.cs.ApplicationConfig().Organizations()
+		orgs := ac.Organizations()
 		toret := make([]string, len(orgs))
 		i := 0
 		for _, org := range orgs {
@@ -470,10 +465,6 @@ func SetCurrConfigBlock(block *common.Block, cid string) error {
 	defer chains.Unlock()
 	if c, ok := chains.list[cid]; ok {
 		c.cb = block
-		// TODO: Change MSP config
-		// c.mspmgr.Reconfig(block)
-
-		// TODO: Change gossip configs
 		return nil
 	}
 	return fmt.Errorf("Chain %s doesn't exist on the peer", cid)

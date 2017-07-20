@@ -1,0 +1,148 @@
+/*
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+                 http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/hyperledger/fabric/orderer/consensus/rbft";
+option java_package = "org.hyperledger.fabric.protos.rbft";
+
+package rbft;
+
+message MultiChainMessage {
+    string chainID = 1;
+    Message msg = 2;
+}
+
+message Message {
+    oneof payload {
+        RequestBatch request_batch = 1;
+        PrePrepare pre_prepare = 2;
+        Prepare prepare = 3;
+        Commit commit = 4;
+        Checkpoint checkpoint = 5;
+        ViewChange view_change = 6;
+        NewView new_view = 7;
+        FetchRequestBatch fetch_request_batch = 8;
+        RequestBatch return_request_batch = 9;
+        Hello hello = 10;
+    }
+}
+
+message Request {
+    google.protobuf.Timestamp timestamp = 1;
+    bytes payload = 2;
+    string replica_id = 3;
+    bytes signature = 4;
+}
+
+message RequestBatch {
+    uint64 seq = 1;
+    repeated Request batch = 2;
+}
+
+message PrePrepare {
+    SeqView seq = 1;
+    string batch_digest = 2;
+    RequestBatch batch = 3;
+    string replica_id = 4;
+}
+
+message Prepare {
+    SeqView seq = 1;
+    string batch_digest = 2;
+    string replica_id = 3;
+}
+
+message Commit {
+    SeqView seq = 1;
+    string batch_digest = 2;
+    string replica_id = 3;
+}
+
+message Checkpoint {
+    SeqView seq = 1;
+    string checkpoint_digest = 2;
+    string id = 3;
+    string replica_Id = 4;
+}
+
+message PQ {
+    uint64 seq_no = 1;
+    uint64 view = 2;
+    string batch_digest = 3;
+}
+
+message PQSet {
+    repeated PQ set = 1;
+}
+
+message ViewChange {
+    message C {
+        uint64 sequence_number = 1;
+        string id = 2;
+    }
+    uint64 view = 1;
+    uint64 low_watermark = 2;
+    repeated C cset = 3;
+    repeated PQ pset = 4;
+    repeated PQ qset = 5;
+    string replica_id = 6;
+    bytes signature = 7;
+}
+
+message NewView {
+    uint64 view = 1;
+    repeated ViewChange vset = 2;
+    map<uint64, string> xset = 3;
+    string replica_id = 4;
+}
+
+message FetchRequestBatch {
+    string batch_digest = 1;
+    string replica_id = 2;
+}
+
+message Hello {
+    RequestBatch batch = 1;
+    NewView new_view = 2;
+}
+
+message SeqView {
+    uint64 view = 1;
+    uint64 seq_no = 2;
+}
+
+message Signed {
+    bytes data = 1;
+    bytes signature = 2;
+}
+
+message BftMetadata {
+    int64 seq = 1;
+    uint64 N = 2;
+    uint64 F = 3;
+    uint64 K = 4;
+    uint64 L = 5;
+    uint64 low_watermark = 6;
+    uint64 request_timeout = 7;
+}
+
+service consensus {
+    rpc consensus(handshake) returns (stream MultiChainMessage) {}
+}
+
+message handshake {
+}

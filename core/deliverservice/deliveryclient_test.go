@@ -17,6 +17,9 @@ limitations under the License.
 package deliverclient
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -38,7 +41,7 @@ func init() {
 }
 
 const (
-	goRoutineTestWaitTimeout = time.Second * 10
+	goRoutineTestWaitTimeout = time.Second * 15
 )
 
 var (
@@ -95,10 +98,12 @@ func TestNewDeliverService(t *testing.T) {
 		return &mocks.MockAtomicBroadcastClient{blocksDeliverer}
 	}
 
-	connFactory := func(endpoint string) (*grpc.ClientConn, error) {
-		lock.Lock()
-		defer lock.Unlock()
-		return newConnection(), nil
+	connFactory := func(_ string) func(string) (*grpc.ClientConn, error) {
+		return func(endpoint string) (*grpc.ClientConn, error) {
+			lock.Lock()
+			defer lock.Unlock()
+			return newConnection(), nil
+		}
 	}
 	service, err := NewDeliverService(&Config{
 		Endpoints:   []string{"a"},
@@ -245,6 +250,103 @@ func TestDeliverServiceFailover(t *testing.T) {
 	service.Stop()
 }
 
+func TestDeliverServiceServiceUnavailable(t *testing.T) {
+	orgMaxRetryDelay := blocksprovider.MaxRetryDelay
+	blocksprovider.MaxRetryDelay = time.Millisecond * 200
+	defer func() { blocksprovider.MaxRetryDelay = orgMaxRetryDelay }()
+	defer ensureNoGoroutineLeak(t)()
+	// Scenario: bring up 2 ordering service instances,
+	// Make the instance the client connects to fail after a delivery of a block and send SERVICE_UNAVAILABLE
+	// whenever subsequent seeks are sent to it.
+	// The client is expected to connect to the other instance, and to ask for a block sequence that is the next block
+	// after the last block it got from the first ordering service node.
+
+	os1 := mocks.NewOrderer(5615, t)
+	os2 := mocks.NewOrderer(5616, t)
+
+	gossipServiceAdapter := &mocks.MockGossipServiceAdapter{GossipBlockDisseminations: make(chan uint64)}
+
+	service, err := NewDeliverService(&Config{
+		Endpoints:   []string{"localhost:5615", "localhost:5616"},
+		Gossip:      gossipServiceAdapter,
+		CryptoSvc:   &mockMCS{},
+		ABCFactory:  DefaultABCFactory,
+		ConnFactory: DefaultConnectionFactory,
+	})
+	assert.NoError(t, err)
+	li := &mocks.MockLedgerInfo{Height: 100}
+	os1.SetNextExpectedSeek(li.Height)
+	os2.SetNextExpectedSeek(li.Height)
+
+	err = service.StartDeliverForChannel("TEST_CHAINID", li)
+	assert.NoError(t, err, "can't start delivery")
+
+	waitForConnectionToSomeOSN := func() (*mocks.Orderer, *mocks.Orderer) {
+		for {
+			if os1.ConnCount() > 0 {
+				return os1, os2
+			}
+			if os2.ConnCount() > 0 {
+				return os2, os1
+			}
+			time.Sleep(time.Millisecond * 100)
+		}
+	}
+
+	activeInstance, backupInstance := waitForConnectionToSomeOSN()
+	assert.NotNil(t, activeInstance)
+	assert.NotNil(t, backupInstance)
+	// Check that delivery client get connected to active
+	assert.Equal(t, activeInstance.ConnCount(), 1)
+	// and not connected to backup instances
+	assert.Equal(t, backupInstance.ConnCount(), 0)
+
+	// Send first block
+	go activeInstance.SendBlock(li.Height)
+
+	assertBlockDissemination(li.Height, gossipServiceAdapter.GossipBlockDisseminations, t)
+	li.Height++
+
+	// Backup instance should expect a seek of 101 since we got 100
+	backupInstance.SetNextExpectedSeek(li.Height)
+	// Have backup instance prepare to send a block
+	backupInstance.SendBlock(li.Height)
+
+	// Fail instance delivery client connected to
+	activeInstance.Fail()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func(ctx context.Context) {
+		defer wg.Done()
+		for {
+			select {
+			case <-time.After(time.Millisecond * 100):
+				if backupInstance.ConnCount() > 0 {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(ctx)
+
+	wg.Wait()
+	assert.NoError(t, ctx.Err(), "Delivery client has not failed over to alive ordering service")
+	// Check that delivery client was indeed connected
+	assert.Equal(t, backupInstance.ConnCount(), 1)
+	// Ensure the client asks blocks from the other ordering service node
+	assertBlockDissemination(li.Height, gossipServiceAdapter.GossipBlockDisseminations, t)
+
+	// Cleanup
+	os1.Shutdown()
+	os2.Shutdown()
+	service.Stop()
+}
+
 func TestDeliverServiceShutdown(t *testing.T) {
 	defer ensureNoGoroutineLeak(t)()
 	// Scenario: Launch an ordering service node and let the client pull some blocks.
@@ -343,29 +445,42 @@ func TestDeliverServiceBadConfig(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+func TestRetryPolicyOverflow(t *testing.T) {
+	connFactory := func(channelID string) func(endpoint string) (*grpc.ClientConn, error) {
+		return func(_ string) (*grpc.ClientConn, error) {
+			return nil, errors.New("")
+		}
+	}
+	client := (&deliverServiceImpl{conf: &Config{ConnFactory: connFactory}}).newClient("TEST", &mocks.MockLedgerInfo{Height: uint64(100)})
+	assert.NotNil(t, client.shouldRetry)
+	for i := 0; i < 100; i++ {
+		retryTime, _ := client.shouldRetry(i, time.Second)
+		assert.True(t, retryTime <= time.Hour && retryTime > 0)
+	}
+}
+
 func assertBlockDissemination(expectedSeq uint64, ch chan uint64, t *testing.T) {
 	select {
 	case seq := <-ch:
 		assert.Equal(t, expectedSeq, seq)
 	case <-time.After(time.Second * 5):
-		assert.Fail(t, "Didn't gossip a new block within a timely manner")
+		assert.FailNow(t, fmt.Sprintf("Didn't gossip a new block with seq num %d within a timely manner", expectedSeq))
+		t.Fatal()
 	}
 }
 
 func ensureNoGoroutineLeak(t *testing.T) func() {
-	//goroutineCountAtStart := runtime.NumGoroutine()
+	goroutineCountAtStart := runtime.NumGoroutine()
 	return func() {
-		// Temporarily disabled, see FAB-3257 for progress
-		/*		start := time.Now()
-				timeLimit := start.Add(goRoutineTestWaitTimeout)
-				for time.Now().Before(timeLimit) {
-					time.Sleep(time.Millisecond * 500)
-					if goroutineCountAtStart == runtime.NumGoroutine() {
-						fmt.Println(getStackTrace())
-						return
-					}
-				}
-				assert.Equal(t, goroutineCountAtStart, runtime.NumGoroutine(), "Some goroutine(s) didn't finish: %s", getStackTrace())*/
+		start := time.Now()
+		timeLimit := start.Add(goRoutineTestWaitTimeout)
+		for time.Now().Before(timeLimit) {
+			time.Sleep(time.Millisecond * 500)
+			if goroutineCountAtStart >= runtime.NumGoroutine() {
+				return
+			}
+		}
+		assert.Fail(t, "Some goroutine(s) didn't finish: %s", getStackTrace())
 	}
 }
 

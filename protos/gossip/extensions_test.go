@@ -72,6 +72,10 @@ func TestToString(t *testing.T) {
 		},
 	}
 	assert.NotContains(t, fmt.Sprintf("%v", sMsg), "2")
+	sMsg.GetDataMsg().Payload = nil
+	assert.NotPanics(t, func() {
+		_ = sMsg.String()
+	})
 
 	sMsg = &SignedGossipMessage{
 		GossipMessage: &GossipMessage{
@@ -697,18 +701,14 @@ func TestGossipMessageSign(t *testing.T) {
 		DataMsg: &DataMessage{},
 	})
 
-	signedMsg := msg.Sign(idSigner)
+	signedMsg, _ := msg.Sign(idSigner)
 
 	// Since checking the identity signer, signature will be same as the payload
 	assert.Equal(t, signedMsg.Payload, signedMsg.Signature)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Using error signer should lead to the panic")
-		}
-	}()
-
-	_ = msg.Sign(errSigner)
+	env, err := msg.Sign(errSigner)
+	assert.Error(t, err)
+	assert.Nil(t, env)
 }
 
 func TestEnvelope_NoopSign(t *testing.T) {
@@ -717,10 +717,11 @@ func TestEnvelope_NoopSign(t *testing.T) {
 		DataMsg: &DataMessage{},
 	})
 
-	signedMsg := msg.NoopSign()
+	signedMsg, err := msg.NoopSign()
 
 	// Since checking the identity signer, signature will be same as the payload
 	assert.Nil(t, signedMsg.Signature)
+	assert.NoError(t, err)
 }
 
 func TestSignedGossipMessage_Verify(t *testing.T) {

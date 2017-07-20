@@ -1,3 +1,8 @@
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
 version: '2'
 
 services:
@@ -15,6 +20,17 @@ services:
         max-file: "2"
     volumes:
       - ../build/nodes/ca:/etc/hyperledger/fabric-ca-server
+
+  tlsca:
+    container_name: tlsca
+    image: hyperledger/fabric-ca
+    dns_search: .
+    environment:
+      - FABRIC_CA_SERVER_TLS_ENABLED=${TLS_ENABLED}
+    logging:
+      <<: *logging
+    volumes:
+      - ../build/nodes/tlsca:/etc/hyperledger/fabric-ca-server
 
   orderer:
     container_name: orderer

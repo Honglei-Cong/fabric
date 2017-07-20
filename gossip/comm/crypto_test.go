@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -84,31 +83,17 @@ func (s *gossipTestServer) Ping(context.Context, *proto.Empty) (*proto.Empty, er
 }
 
 func TestCertificateExtraction(t *testing.T) {
-	err := GenerateCertificates("key.pem", "cert.pem")
-	defer os.Remove("cert.pem")
-	defer os.Remove("key.pem")
-	assert.NoError(t, err, "%v", err)
-	serverCert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
-	assert.NoError(t, err, "%v", err)
-
-	srv := createTestServer(t, &serverCert)
+	cert := GenerateCertificatesOrPanic()
+	srv := createTestServer(t, &cert)
 	defer srv.stop()
 
-	GenerateCertificates("key2.pem", "cert2.pem")
-	defer os.Remove("cert2.pem")
-	defer os.Remove("key2.pem")
-	clientCert, err := tls.LoadX509KeyPair("cert2.pem", "key2.pem")
+	clientCert := GenerateCertificatesOrPanic()
 	clientCertHash := certHashFromRawCert(clientCert.Certificate[0])
-	assert.NoError(t, err)
 	ta := credentials.NewTLS(&tls.Config{
 		Certificates:       []tls.Certificate{clientCert},
 		InsecureSkipVerify: true,
 	})
-	assert.NoError(t, err, "%v", err)
-	ac := &authCreds{tlsCreds: ta}
-	assert.Equal(t, "1.2", ac.Info().SecurityVersion)
-	assert.Equal(t, "tls", ac.Info().SecurityProtocol)
-	conn, err := grpc.Dial("localhost:5611", grpc.WithTransportCredentials(ac), grpc.WithBlock(), grpc.WithTimeout(time.Second))
+	conn, err := grpc.Dial("localhost:5611", grpc.WithTransportCredentials(ta), grpc.WithBlock(), grpc.WithTimeout(time.Second))
 	assert.NoError(t, err, "%v", err)
 
 	cl := proto.NewGossipClient(conn)

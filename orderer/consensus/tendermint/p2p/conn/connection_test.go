@@ -1,3 +1,7 @@
+// Modified for Fabric
+// Originally Copyright (c) 2013-2018 Tendermint
+// https://github.com/tendermint/tendermint/blob/master/LICENSE
+
 package conn
 
 import (

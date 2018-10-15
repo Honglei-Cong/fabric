@@ -15,7 +15,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 
 	"github.com/tendermint/tendermint/config"
-	tmconn "github.com/tendermint/tendermint/p2p/conn"
+	tmconn "github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
 )
 
 var testIPSuffix uint32
@@ -213,12 +213,6 @@ func newPeerConn(
 
 //---------------------------------------------------
 // Implements cmn.Service
-
-// SetLogger implements BaseService.
-func (p *peer) SetLogger(l log.Logger) {
-	p.Logger = l
-	p.mconn.SetLogger(l)
-}
 
 // OnStart implements BaseService.
 func (p *peer) OnStart() error {

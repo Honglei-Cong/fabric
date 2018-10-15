@@ -1,3 +1,7 @@
+// Modified for Fabric
+// Originally Copyright (c) 2013-2018 Tendermint
+// https://github.com/tendermint/tendermint/blob/master/LICENSE
+
 // Uses nacl's secret_box to encrypt a net.Conn.
 // It is (meant to be) an implementation of the STS protocol.
 // Note we do not (yet) assume that a remote peer's pubkey

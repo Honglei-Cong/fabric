@@ -13,7 +13,6 @@ import (
 
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p/upnp"
 )
 
 // Listener is a network listener for stream-oriented protocols, providing
@@ -65,9 +64,7 @@ func splitHostPort(addr string) (host string, port int) {
 // to determine external address using UPnP.
 func NewDefaultListener(
 	fullListenAddrString string,
-	externalAddrString string,
-	useUPnP bool,
-	logger log.Logger) Listener {
+	externalAddrString string) Listener {
 
 	// Split protocol, address, and port.
 	protocol, lAddr := cmn.ProtocolAndAddress(fullListenAddrString)
@@ -109,11 +106,6 @@ func NewDefaultListener(
 		if err != nil {
 			panic(fmt.Sprintf("Error in ExternalAddress: %v", err))
 		}
-	}
-
-	// If the lAddrIP is INADDR_ANY, try UPnP.
-	if extAddr == nil && useUPnP && inAddrAny {
-		extAddr = getUPNPExternalAddress(lAddrPort, listenerPort, logger)
 	}
 
 	// Otherwise just use the local address.
@@ -215,36 +207,6 @@ func (l *DefaultListener) String() string {
 
 /* external address helpers */
 
-// UPNP external address discovery & port mapping
-func getUPNPExternalAddress(externalPort, internalPort int, logger log.Logger) *NetAddress {
-	logger.Info("Getting UPNP external address")
-	nat, err := upnp.Discover()
-	if err != nil {
-		logger.Info("Could not perform UPNP discover", "err", err)
-		return nil
-	}
-
-	ext, err := nat.GetExternalAddress()
-	if err != nil {
-		logger.Info("Could not get UPNP external address", "err", err)
-		return nil
-	}
-
-	// UPnP can't seem to get the external port, so let's just be explicit.
-	if externalPort == 0 {
-		externalPort = defaultExternalPort
-	}
-
-	externalPort, err = nat.AddPortMapping("tcp", externalPort, internalPort, "tendermint", 0)
-	if err != nil {
-		logger.Info("Could not add UPNP port mapping", "err", err)
-		return nil
-	}
-
-	logger.Info("Got UPNP external address", "address", ext)
-	return NewNetAddressIPPort(ext, uint16(externalPort))
-}
-
 func isIpv6(ip net.IP) bool {
 	v4 := ip.To4()
 	if v4 != nil {
@@ -258,7 +220,7 @@ func isIpv6(ip net.IP) bool {
 }
 
 // TODO: use syscalls: see issue #712
-func getNaiveExternalAddress(defaultToIPv4 bool, port int, settleForLocal bool, logger log.Logger) *NetAddress {
+func getNaiveExternalAddress(defaultToIPv4 bool, port int, settleForLocal bool) *NetAddress {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		panic(cmn.Fmt("Could not fetch interface addresses: %v", err))
@@ -284,5 +246,5 @@ func getNaiveExternalAddress(defaultToIPv4 bool, port int, settleForLocal bool, 
 
 	// try again, but settle for local
 	logger.Info("Node may not be connected to internet. Settling for local address")
-	return getNaiveExternalAddress(defaultToIPv4, port, true, logger)
+	return getNaiveExternalAddress(defaultToIPv4, port, true)
 }

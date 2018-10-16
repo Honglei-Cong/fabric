@@ -16,8 +16,14 @@ import (
 
 	"github.com/tendermint/tendermint/config"
 	tmconn "github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
+	"github.com/hyperledger/fabric/common/flogging"
 )
 
+const (
+	pkgLogID    = "orderer/consensus/tendermint/p2p"
+)
+
+var logger = flogging.MustGetLogger(pkgLogID)
 var testIPSuffix uint32
 
 // Peer is an interface representing a peer connected on a reactor.
@@ -301,7 +307,7 @@ func (p *peer) hasChannel(chID byte) bool {
 	}
 	// NOTE: probably will want to remove this
 	// but could be helpful while the feature is new
-	p.Logger.Debug(
+	logger.Debug(
 		"Unknown channel for peer",
 		"channel",
 		chID,

@@ -20,7 +20,7 @@ import (
 	cfg "github.com/tendermint/tendermint/config"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	tmevents "github.com/tendermint/tendermint/libs/events"
-	"github.com/tendermint/tendermint/p2p"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 )
@@ -119,9 +119,6 @@ type ConsensusState struct {
 	// synchronous pubsub between consensus state and reactor.
 	// state only emits EventNewRoundStep, EventVote and EventProposalHeartbeat
 	evsw tmevents.EventSwitch
-
-	// for reporting metrics
-	metrics *Metrics
 }
 
 // CSOption sets an optional parameter on the ConsensusState.
@@ -150,7 +147,6 @@ func NewConsensusState(
 		wal:              nilWAL{},
 		evpool:           evpool,
 		evsw:             tmevents.NewEventSwitch(),
-		metrics:          NopMetrics(),
 	}
 	// set function defaults (may be overwritten before calling Start)
 	cs.decideProposal = cs.defaultDecideProposal
@@ -170,12 +166,6 @@ func NewConsensusState(
 
 //----------------------------------------
 // Public interface
-
-// SetLogger implements Service.
-func (cs *ConsensusState) SetLogger(l log.Logger) {
-	cs.BaseService.Logger = l
-	cs.timeoutTicker.SetLogger(l)
-}
 
 // SetEventBus sets event bus.
 func (cs *ConsensusState) SetEventBus(b *types.EventBus) {

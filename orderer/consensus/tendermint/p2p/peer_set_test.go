@@ -9,11 +9,10 @@ import (
 	"net"
 	"sync"
 	"testing"
-
 	"github.com/stretchr/testify/assert"
-
-	crypto "github.com/tendermint/tendermint/crypto"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
+	"golang.org/x/crypto/ed25519"
+	crand "crypto/rand"
 )
 
 // Returns an empty kvstore peer
@@ -22,7 +21,11 @@ func randPeer(ip net.IP) *peer {
 		ip = net.IP{127, 0, 0, 1}
 	}
 
-	nodeKey := NodeKey{PrivKey: crypto.GenPrivKeyEd25519()}
+	_, privkey, err := ed25519.GenerateKey(crand.Reader)
+	if err != nil {
+		return nil
+	}
+	nodeKey := NodeKey{PrivKey: privkey}
 	p := &peer{
 		nodeInfo: NodeInfo{
 			ID:         nodeKey.ID(),

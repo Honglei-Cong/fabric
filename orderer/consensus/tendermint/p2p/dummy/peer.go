@@ -7,9 +7,9 @@ package dummy
 import (
 	"net"
 
-	p2p "github.com/tendermint/tendermint/p2p"
-	tmconn "github.com/tendermint/tendermint/p2p/conn"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	p2p "github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
+	tmconn "github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 type peer struct {
@@ -24,7 +24,7 @@ func NewPeer() *peer {
 	p := &peer{
 		kv: make(map[string]interface{}),
 	}
-	p.BaseService = *cmn.NewBaseService(nil, "peer", p)
+	p.BaseService = *cmn.NewBaseService("peer", p)
 
 	return p
 }

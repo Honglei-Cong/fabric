@@ -11,10 +11,8 @@ import (
 	"time"
 
 	crypto "github.com/tendermint/tendermint/crypto"
-	cmn "github.com/tendermint/tendermint/libs/common"
-	"github.com/tendermint/tendermint/libs/log"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 
-	"github.com/tendermint/tendermint/config"
 	tmconn "github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
 	"github.com/hyperledger/fabric/common/flogging"
 )
@@ -50,7 +48,7 @@ type Peer interface {
 type peerConn struct {
 	outbound   bool
 	persistent bool
-	config     *config.P2PConfig
+	config     *P2PConfig
 	conn       net.Conn // source connection
 	ip         net.IP
 }
@@ -140,7 +138,7 @@ func newPeer(
 
 func newOutboundPeerConn(
 	addr *NetAddress,
-	config *config.P2PConfig,
+	config *P2PConfig,
 	persistent bool,
 	ourNodePrivKey crypto.PrivKey,
 ) (peerConn, error) {
@@ -170,7 +168,7 @@ func newOutboundPeerConn(
 
 func newInboundPeerConn(
 	conn net.Conn,
-	config *config.P2PConfig,
+	config *P2PConfig,
 	ourNodePrivKey crypto.PrivKey,
 ) (peerConn, error) {
 
@@ -181,7 +179,7 @@ func newInboundPeerConn(
 
 func newPeerConn(
 	rawConn net.Conn,
-	cfg *config.P2PConfig,
+	cfg *P2PConfig,
 	outbound, persistent bool,
 	ourNodePrivKey crypto.PrivKey,
 ) (pc peerConn, err error) {
@@ -341,11 +339,11 @@ func (pc *peerConn) HandshakeTimeout(
 
 	var trs, _ = cmn.Parallel(
 		func(_ int) (val interface{}, err error, abort bool) {
-			_, err = cdc.MarshalBinaryWriter(pc.conn, ourNodeInfo)
+			_, err = cmn.MarshalJsonBinaryWriter(pc.conn, ourNodeInfo)
 			return
 		},
 		func(_ int) (val interface{}, err error, abort bool) {
-			_, err = cdc.UnmarshalBinaryReader(
+			_, err = cmn.UnmarshalJsonBinaryReader(
 				pc.conn,
 				&peerNodeInfo,
 				int64(MaxNodeInfoSize()),
@@ -390,7 +388,7 @@ func (p *peer) String() string {
 //------------------------------------------------------------------
 // helper funcs
 
-func dial(addr *NetAddress, cfg *config.P2PConfig) (net.Conn, error) {
+func dial(addr *NetAddress, cfg *P2PConfig) (net.Conn, error) {
 	if cfg.TestDialFail {
 		return nil, fmt.Errorf("dial err (peerConfig.DialFail == true)")
 	}

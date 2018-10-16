@@ -14,20 +14,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
 	crypto "github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/libs/log"
-
-	"github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/p2p/conn"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
 )
 
 var (
-	cfg *config.P2PConfig
+	cfg *P2PConfig
 )
 
 func init() {
-	cfg = config.DefaultP2PConfig()
+	cfg = DefaultP2PConfig()
 	cfg.PexReactor = true
 	cfg.AllowDuplicateIP = true
 }
@@ -55,7 +51,6 @@ func NewTestReactor(channels []*conn.ChannelDescriptor, logMessages bool) *TestR
 		msgsReceived: make(map[byte][]PeerMessage),
 	}
 	tr.BaseReactor = *NewBaseReactor("TestReactor", tr)
-	tr.SetLogger(log.TestingLogger())
 	return tr
 }
 
@@ -333,7 +328,7 @@ func TestSwitchReconnectsToPersistentPeer(t *testing.T) {
 	defer rp.Stop()
 
 	// simulate first time dial failure
-	conf := config.DefaultP2PConfig()
+	conf := DefaultP2PConfig()
 	conf.TestDialFail = true
 	err = sw.addOutboundPeerWithConfig(rp.Addr(), conf, true)
 	require.NotNil(err)

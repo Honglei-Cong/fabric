@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 // NetAddress defines information about a peer on the network

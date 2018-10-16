@@ -9,11 +9,8 @@ import (
 	"net"
 
 	crypto "github.com/tendermint/tendermint/crypto"
-	cmn "github.com/tendermint/tendermint/libs/common"
-	"github.com/tendermint/tendermint/libs/log"
-
-	"github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/p2p/conn"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
 )
 
 func AddPeerToSwitch(sw *Switch, peer Peer) {
@@ -32,7 +29,6 @@ func CreateRandomPeer(outbound bool) *peer {
 		},
 		mconn: &conn.MConnection{},
 	}
-	p.SetLogger(log.TestingLogger().With("peer", addr))
 	return p
 }
 
@@ -60,7 +56,7 @@ const TEST_HOST = "localhost"
 // If connect==Connect2Switches, the switches will be fully connected.
 // initSwitch defines how the i'th switch should be initialized (ie. with what reactors).
 // NOTE: panics if any switch fails to start.
-func MakeConnectedSwitches(cfg *config.P2PConfig, n int, initSwitch func(int, *Switch) *Switch, connect func([]*Switch, int, int)) []*Switch {
+func MakeConnectedSwitches(cfg *P2PConfig, n int, initSwitch func(int, *Switch) *Switch, connect func([]*Switch, int, int)) []*Switch {
 	switches := make([]*Switch, n)
 	for i := 0; i < n; i++ {
 		switches[i] = MakeSwitch(cfg, i, TEST_HOST, "123.123.123", initSwitch)
@@ -111,7 +107,7 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 	pc, err := newInboundPeerConn(conn, sw.config, sw.nodeKey.PrivKey)
 	if err != nil {
 		if err := conn.Close(); err != nil {
-			sw.Logger.Error("Error closing connection", "err", err)
+			logger.Error("Error closing connection", "err", err)
 		}
 		return err
 	}
@@ -135,14 +131,13 @@ func StartSwitches(switches []*Switch) error {
 	return nil
 }
 
-func MakeSwitch(cfg *config.P2PConfig, i int, network, version string, initSwitch func(int, *Switch) *Switch) *Switch {
+func MakeSwitch(cfg *P2PConfig, i int, network, version string, initSwitch func(int, *Switch) *Switch) *Switch {
 	// new switch, add reactors
 	// TODO: let the config be passed in?
 	nodeKey := &NodeKey{
 		PrivKey: crypto.GenPrivKeyEd25519(),
 	}
 	sw := NewSwitch(cfg)
-	sw.SetLogger(log.TestingLogger())
 	sw = initSwitch(i, sw)
 	ni := NodeInfo{
 		ID:         nodeKey.ID(),

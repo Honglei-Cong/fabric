@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	cmn "github.com/tendermint/tendermint/libs/common"
-	flow "github.com/tendermint/tendermint/libs/flowrate"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
+	flow "github.com/hyperledger/fabric/orderer/consensus/tendermint/common/flowrate"
 	"github.com/hyperledger/fabric/common/flogging"
 )
 
@@ -179,7 +179,7 @@ func NewMConnectionWithConfig(conn net.Conn, chDescs []*ChannelDescriptor, onRec
 	mconn.channels = channels
 	mconn.channelsIdx = channelsIdx
 
-	mconn.BaseService = *cmn.NewBaseService(nil, "MConnection", mconn)
+	mconn.BaseService = *cmn.NewBaseService("MConnection", mconn)
 
 	// maxPacketMsgSize() is a bit heavy, so call just once
 	mconn._maxPacketMsgSize = mconn.maxPacketMsgSize()
@@ -339,7 +339,7 @@ FOR_LOOP:
 			}
 		case <-c.pingTimer.Chan():
 			logger.Debug("Send Ping")
-			_n, err = cdc.MarshalBinaryWriter(c.bufConnWriter, PacketPing{})
+			_n, err = cmn.MarshalJsonBinaryWriter(c.bufConnWriter, PacketPing{})
 			if err != nil {
 				break SELECTION
 			}
@@ -361,7 +361,7 @@ FOR_LOOP:
 			}
 		case <-c.pong:
 			logger.Debug("Send Pong")
-			_n, err = cdc.MarshalBinaryWriter(c.bufConnWriter, PacketPong{})
+			_n, err = cmn.MarshalJsonBinaryWriter(c.bufConnWriter, PacketPong{})
 			if err != nil {
 				break SELECTION
 			}
@@ -479,7 +479,7 @@ FOR_LOOP:
 		var packet Packet
 		var _n int64
 		var err error
-		_n, err = cdc.UnmarshalBinaryReader(c.bufConnReader, &packet, int64(c._maxPacketMsgSize))
+		_n, err = cmn.UnmarshalJsonBinaryReader(c.bufConnReader, &packet, int64(c._maxPacketMsgSize))
 		c.recvMonitor.Update(int(_n))
 		if err != nil {
 			if c.IsRunning() {
@@ -555,7 +555,7 @@ func (c *MConnection) stopPongTimer() {
 // maxPacketMsgSize returns a maximum size of PacketMsg, including the overhead
 // of amino encoding.
 func (c *MConnection) maxPacketMsgSize() int {
-	return len(cdc.MustMarshalBinary(PacketMsg{
+	return len(cmn.MustMarshalJson(&PacketMsg{
 		ChannelID: 0x01,
 		EOF:       1,
 		Bytes:     make([]byte, c.config.MaxPacketMsgPayloadSize),
@@ -719,7 +719,7 @@ func (ch *Channel) nextPacketMsg() PacketMsg {
 // Not goroutine-safe
 func (ch *Channel) writePacketMsgTo(w io.Writer) (n int64, err error) {
 	var packet = ch.nextPacketMsg()
-	n, err = cdc.MarshalBinaryWriter(w, packet)
+	n, err = cmn.MarshalJsonBinaryWriter(w, packet)
 	ch.recentlySent += n
 	return
 }
@@ -762,27 +762,22 @@ type Packet interface {
 	AssertIsPacket()
 }
 
-func RegisterPacket(cdc *amino.Codec) {
-	cdc.RegisterInterface((*Packet)(nil), nil)
-	cdc.RegisterConcrete(PacketPing{}, "tendermint/p2p/PacketPing", nil)
-	cdc.RegisterConcrete(PacketPong{}, "tendermint/p2p/PacketPong", nil)
-	cdc.RegisterConcrete(PacketMsg{}, "tendermint/p2p/PacketMsg", nil)
-}
-
 func (_ PacketPing) AssertIsPacket() {}
 func (_ PacketPong) AssertIsPacket() {}
 func (_ PacketMsg) AssertIsPacket()  {}
 
 type PacketPing struct {
+	ChannelID byte `json:"channel_id"`
 }
 
 type PacketPong struct {
+	ChannelID byte `json:"channel_id"`
 }
 
 type PacketMsg struct {
-	ChannelID byte
-	EOF       byte // 1 means message ends here.
-	Bytes     []byte
+	ChannelID byte `json:"channel_id"`
+	EOF       byte `json:"eof"` // 1 means message ends here.
+	Bytes     []byte `json:"bytes"`
 }
 
 func (mp PacketMsg) String() string {

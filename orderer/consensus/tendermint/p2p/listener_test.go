@@ -11,12 +11,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tendermint/tendermint/libs/log"
 )
 
 func TestListener(t *testing.T) {
 	// Create a listener
-	l := NewDefaultListener("tcp://:8001", "", false, log.TestingLogger())
+	l := NewDefaultListener("tcp://:8001", "")
 
 	// Dial the listener
 	lAddr := l.ExternalAddress()
@@ -57,7 +56,7 @@ func TestExternalAddress(t *testing.T) {
 	{
 		// Create a listener with no external addr. Should default
 		// to local ipv4.
-		l := NewDefaultListener("tcp://:8001", "", false, log.TestingLogger())
+		l := NewDefaultListener("tcp://:8001", "")
 		lAddr := l.ExternalAddress().String()
 		_, _, err := net.SplitHostPort(lAddr)
 		require.Nil(t, err)
@@ -69,7 +68,7 @@ func TestExternalAddress(t *testing.T) {
 	{
 		// Create a listener with set external ipv4 addr.
 		setExAddr := "8.8.8.8:8080"
-		l := NewDefaultListener("tcp://:8001", setExAddr, false, log.TestingLogger())
+		l := NewDefaultListener("tcp://:8001", setExAddr)
 		lAddr := l.ExternalAddress().String()
 		require.Equal(t, lAddr, setExAddr)
 		l.Stop()
@@ -78,6 +77,6 @@ func TestExternalAddress(t *testing.T) {
 	{
 		// Invalid external addr causes panic
 		setExAddr := "awrlsckjnal:8080"
-		require.Panics(t, func() { NewDefaultListener("tcp://:8001", setExAddr, false, log.TestingLogger()) })
+		require.Panics(t, func() { NewDefaultListener("tcp://:8001", setExAddr) })
 	}
 }

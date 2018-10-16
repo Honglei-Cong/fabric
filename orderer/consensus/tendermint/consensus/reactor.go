@@ -18,9 +18,10 @@ import (
 	cmn "github.com/tendermint/tendermint/libs/common"
 	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
+	"github.com/hyperledger/fabric/common/flogging"
 )
 
 const (
@@ -33,6 +34,12 @@ const (
 
 	blocksToContributeToBecomeGoodPeer = 10000
 )
+
+const (
+	pkgLogID    = "orderer/consensus/tendermint/consensus"
+)
+
+var logger = flogging.MustGetLogger(pkgLogID)
 
 //-----------------------------------------------------------------------------
 
@@ -61,7 +68,7 @@ func NewConsensusReactor(consensusState *ConsensusState, fastSync bool) *Consens
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in fast sync.
 func (conR *ConsensusReactor)   OnStart() error {
-	conR.Logger.Info("ConsensusReactor ", "fastSync", conR.FastSync())
+	logger.Info("ConsensusReactor ", "fastSync", conR.FastSync())
 	if err := conR.BaseReactor.OnStart(); err != nil {
 		return err
 	}
@@ -92,7 +99,7 @@ func (conR *ConsensusReactor) OnStop() {
 // SwitchToConsensus switches from fast_sync mode to consensus mode.
 // It resets the state, turns off fast_sync, and starts the consensus state-machine
 func (conR *ConsensusReactor) SwitchToConsensus(state sm.State, blocksSynced int) {
-	conR.Logger.Info("SwitchToConsensus")
+	logger.Info("SwitchToConsensus")
 	conR.conS.reconstructLastCommit(state)
 	// NOTE: The line below causes broadcastNewRoundStepRoutine() to
 	// broadcast a NewRoundStepMessage.
@@ -108,7 +115,7 @@ func (conR *ConsensusReactor) SwitchToConsensus(state sm.State, blocksSynced int
 	}
 	err := conR.conS.Start()
 	if err != nil {
-		conR.Logger.Error("Error starting conS", "err", err)
+		logger.Error("Error starting conS", "err", err)
 		return
 	}
 }
@@ -186,17 +193,17 @@ func (conR *ConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 // NOTE: blocks on consensus state for proposals, block parts, and votes
 func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	if !conR.IsRunning() {
-		conR.Logger.Debug("Receive", "src", src, "chId", chID, "bytes", msgBytes)
+		logger.Debug("Receive", "src", src, "chId", chID, "bytes", msgBytes)
 		return
 	}
 
 	msg, err := decodeMsg(msgBytes)
 	if err != nil {
-		conR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
+		logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
 		conR.Switch.StopPeerForError(src, err)
 		return
 	}
-	conR.Logger.Debug("Receive", "src", src, "chId", chID, "msg", msg)
+	logger.Debug("Receive", "src", src, "chId", chID, "msg", msg)
 
 	// Get peer states
 	ps := src.Get(types.PeerStateKey).(*PeerState)
@@ -233,7 +240,7 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			case types.VoteTypePrecommit:
 				ourVotes = votes.Precommits(msg.Round).BitArrayByBlockID(msg.BlockID)
 			default:
-				conR.Logger.Error("Bad VoteSetBitsMessage field Type")
+				logger.Error("Bad VoteSetBitsMessage field Type")
 				return
 			}
 			src.TrySend(VoteSetBitsChannel, cdc.MustMarshalBinaryBare(&VoteSetBitsMessage{
@@ -245,16 +252,16 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			}))
 		case *ProposalHeartbeatMessage:
 			hb := msg.Heartbeat
-			conR.Logger.Debug("Received proposal heartbeat message",
+			logger.Debug("Received proposal heartbeat message",
 				"height", hb.Height, "round", hb.Round, "sequence", hb.Sequence,
 				"valIdx", hb.ValidatorIndex, "valAddr", hb.ValidatorAddress)
 		default:
-			conR.Logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
+			logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 		}
 
 	case DataChannel:
 		if conR.FastSync() {
-			conR.Logger.Info("Ignoring message received during fastSync", "msg", msg)
+			logger.Info("Ignoring message received during fastSync", "msg", msg)
 			return
 		}
 		switch msg := msg.(type) {
@@ -270,12 +277,12 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			}
 			conR.conS.peerMsgQueue <- msgInfo{msg, src.ID()}
 		default:
-			conR.Logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
+			logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 		}
 
 	case VoteChannel:
 		if conR.FastSync() {
-			conR.Logger.Info("Ignoring message received during fastSync", "msg", msg)
+			logger.Info("Ignoring message received during fastSync", "msg", msg)
 			return
 		}
 		switch msg := msg.(type) {
@@ -295,12 +302,12 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 
 		default:
 			// don't punish (leave room for soft upgrades)
-			conR.Logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
+			logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 		}
 
 	case VoteSetBitsChannel:
 		if conR.FastSync() {
-			conR.Logger.Info("Ignoring message received during fastSync", "msg", msg)
+			logger.Info("Ignoring message received during fastSync", "msg", msg)
 			return
 		}
 		switch msg := msg.(type) {
@@ -318,7 +325,7 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 				case types.VoteTypePrecommit:
 					ourVotes = votes.Precommits(msg.Round).BitArrayByBlockID(msg.BlockID)
 				default:
-					conR.Logger.Error("Bad VoteSetBitsMessage field Type")
+					logger.Error("Bad VoteSetBitsMessage field Type")
 					return
 				}
 				ps.ApplyVoteSetBitsMessage(msg, ourVotes)
@@ -327,15 +334,15 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 			}
 		default:
 			// don't punish (leave room for soft upgrades)
-			conR.Logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
+			logger.Error(cmn.Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 		}
 
 	default:
-		conR.Logger.Error(cmn.Fmt("Unknown chId %X", chID))
+		logger.Error(cmn.Fmt("Unknown chId %X", chID))
 	}
 
 	if err != nil {
-		conR.Logger.Error("Error in Receive()", "err", err)
+		logger.Error("Error in Receive()", "err", err)
 	}
 }
 
@@ -381,7 +388,7 @@ func (conR *ConsensusReactor) unsubscribeFromBroadcastEvents() {
 }
 
 func (conR *ConsensusReactor) broadcastProposalHeartbeatMessage(hb *types.Heartbeat) {
-	conR.Logger.Debug("Broadcasting proposal heartbeat message",
+	logger.Debug("Broadcasting proposal heartbeat message",
 		"height", hb.Height, "round", hb.Round, "sequence", hb.Sequence)
 	msg := &ProposalHeartbeatMessage{hb}
 	conR.Switch.Broadcast(StateChannel, cdc.MustMarshalBinaryBare(msg))
@@ -453,7 +460,7 @@ func (conR *ConsensusReactor) sendNewRoundStepMessages(peer p2p.Peer) {
 }
 
 func (conR *ConsensusReactor) gossipDataRoutine(peer p2p.Peer, ps *PeerState) {
-	logger := conR.Logger.With("peer", peer)
+	logger := logger.With("peer", peer)
 
 OUTER_LOOP:
 	for {
@@ -589,7 +596,7 @@ func (conR *ConsensusReactor) gossipDataForCatchup(logger log.Logger, rs *cstype
 }
 
 func (conR *ConsensusReactor) gossipVotesRoutine(peer p2p.Peer, ps *PeerState) {
-	logger := conR.Logger.With("peer", peer)
+	logger := logger.With("peer", peer)
 
 	// Simple hack to throttle logs upon sleep.
 	var sleeping = 0
@@ -716,7 +723,7 @@ func (conR *ConsensusReactor) gossipVotesForHeight(logger log.Logger, rs *cstype
 // NOTE: `queryMaj23Routine` has a simple crude design since it only comes
 // into play for liveness when there's a signature DDoS attack happening.
 func (conR *ConsensusReactor) queryMaj23Routine(peer p2p.Peer, ps *PeerState) {
-	logger := conR.Logger.With("peer", peer)
+	logger := logger.With("peer", peer)
 
 OUTER_LOOP:
 	for {

@@ -5,7 +5,7 @@
 package p2p
 
 import (
-	"github.com/tendermint/tendermint/p2p/conn"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
 	cmn "github.com/tendermint/tendermint/libs/common"
 )
 

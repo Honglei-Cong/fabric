@@ -24,8 +24,9 @@ import (
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/ripemd160"
 
-	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
+	"golang.org/x/crypto/ed25519"
+	"crypto"
 )
 
 // 4 + 1024 == 1028 total frame size
@@ -40,7 +41,7 @@ type SecretConnection struct {
 	recvBuffer []byte
 	recvNonce  *[24]byte
 	sendNonce  *[24]byte
-	remPubKey  crypto.PubKey
+	remPubKey  crypto.PublicKey
 	shrSecret  *[32]byte // shared secret
 }
 
@@ -48,9 +49,9 @@ type SecretConnection struct {
 // Returns nil if error in handshake.
 // Caller should call conn.Close()
 // See docs/sts-final.pdf for more information.
-func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*SecretConnection, error) {
+func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey ed25519.PrivateKey) (*SecretConnection, error) {
 
-	locPubKey := locPrivKey.PubKey()
+	locPubKey := locPrivKey.Public()
 
 	// Generate ephemeral keys for perfect forward secrecy.
 	locEphPub, locEphPriv := genEphKeys()
@@ -97,7 +98,12 @@ func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*
 		return nil, err
 	}
 	remPubKey, remSignature := authSigMsg.Key, authSigMsg.Sig
-	if !remPubKey.VerifyBytes(challenge[:], remSignature) {
+
+	pk, ok := remPubKey.(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("invalid public key")
+	}
+	if !ed25519.Verify(pk, challenge[:], remSignature) {
 		return nil, errors.New("Challenge verification failed")
 	}
 
@@ -107,7 +113,7 @@ func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*
 }
 
 // Returns authenticated remote pubkey
-func (sc *SecretConnection) RemotePubKey() crypto.PubKey {
+func (sc *SecretConnection) RemotePubKey() crypto.PublicKey {
 	return sc.remPubKey
 }
 
@@ -205,7 +211,7 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 	// Send our pubkey and receive theirs in tandem.
 	var trs, _ = cmn.Parallel(
 		func(_ int) (val interface{}, err error, abort bool) {
-			var _, err1 = cdc.MarshalBinaryWriter(conn, locEphPub)
+			var _, err1 = cmn.MarshalJsonBinaryWriter(conn, locEphPub)
 			if err1 != nil {
 				return nil, err1, true // abort
 			} else {
@@ -214,7 +220,7 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 		},
 		func(_ int) (val interface{}, err error, abort bool) {
 			var _remEphPub [32]byte
-			var _, err2 = cdc.UnmarshalBinaryReader(conn, &_remEphPub, 1024*1024) // TODO
+			var _, err2 = cmn.UnmarshalJsonBinaryReader(conn, &_remEphPub, 1024*1024) // TODO
 			if err2 != nil {
 				return nil, err2, true // abort
 			} else {
@@ -270,8 +276,8 @@ func genChallenge(loPubKey, hiPubKey *[32]byte) (challenge *[32]byte) {
 	return hash32(append(loPubKey[:], hiPubKey[:]...))
 }
 
-func signChallenge(challenge *[32]byte, locPrivKey crypto.PrivKey) (signature crypto.Signature) {
-	signature, err := locPrivKey.Sign(challenge[:])
+func signChallenge(challenge *[32]byte, locPrivKey ed25519.PrivateKey) (signature []byte) {
+	signature, err := locPrivKey.Sign(crand.Reader, challenge[:], crypto.Hash(0))
 	// TODO(ismail): let signChallenge return an error instead
 	if err != nil {
 		panic(err)
@@ -280,16 +286,16 @@ func signChallenge(challenge *[32]byte, locPrivKey crypto.PrivKey) (signature cr
 }
 
 type authSigMessage struct {
-	Key crypto.PubKey
-	Sig crypto.Signature
+	Key crypto.PublicKey `json:"key"`
+	Sig []byte `json:"sig"`
 }
 
-func shareAuthSignature(sc *SecretConnection, pubKey crypto.PubKey, signature crypto.Signature) (recvMsg authSigMessage, err error) {
+func shareAuthSignature(sc *SecretConnection, pubKey crypto.PublicKey, signature []byte) (recvMsg authSigMessage, err error) {
 
 	// Send our info and receive theirs in tandem.
 	var trs, _ = cmn.Parallel(
 		func(_ int) (val interface{}, err error, abort bool) {
-			var _, err1 = cdc.MarshalBinaryWriter(sc, authSigMessage{pubKey, signature})
+			var _, err1 = cmn.MarshalJsonBinaryWriter(sc, &authSigMessage{pubKey, signature})
 			if err1 != nil {
 				return nil, err1, true // abort
 			} else {
@@ -298,7 +304,7 @@ func shareAuthSignature(sc *SecretConnection, pubKey crypto.PubKey, signature cr
 		},
 		func(_ int) (val interface{}, err error, abort bool) {
 			var _recvMsg authSigMessage
-			var _, err2 = cdc.UnmarshalBinaryReader(sc, &_recvMsg, 1024*1024) // TODO
+			var _, err2 = cmn.UnmarshalJsonBinaryReader(sc, &_recvMsg, 1024*1024) // TODO
 			if err2 != nil {
 				return nil, err2, true // abort
 			} else {

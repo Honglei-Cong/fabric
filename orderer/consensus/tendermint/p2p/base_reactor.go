@@ -6,7 +6,7 @@ package p2p
 
 import (
 	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p/conn"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 type Reactor interface {
@@ -43,7 +43,7 @@ type BaseReactor struct {
 
 func NewBaseReactor(name string, impl Reactor) *BaseReactor {
 	return &BaseReactor{
-		BaseService: *cmn.NewBaseService(nil, name, impl),
+		BaseService: *cmn.NewBaseService(name, impl),
 		Switch:      nil,
 	}
 }

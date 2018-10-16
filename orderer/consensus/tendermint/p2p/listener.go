@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	cmn "github.com/tendermint/tendermint/libs/common"
-	"github.com/tendermint/tendermint/libs/log"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 // Listener is a network listener for stream-oriented protocols, providing
@@ -68,7 +67,7 @@ func NewDefaultListener(
 
 	// Split protocol, address, and port.
 	protocol, lAddr := cmn.ProtocolAndAddress(fullListenAddrString)
-	lAddrIP, lAddrPort := splitHostPort(lAddr)
+	lAddrIP, _ := splitHostPort(lAddr)
 
 	// Create listener
 	var listener net.Listener
@@ -111,7 +110,7 @@ func NewDefaultListener(
 	// Otherwise just use the local address.
 	if extAddr == nil {
 		defaultToIPv4 := inAddrAny
-		extAddr = getNaiveExternalAddress(defaultToIPv4, listenerPort, false, logger)
+		extAddr = getNaiveExternalAddress(defaultToIPv4, listenerPort, false)
 	}
 	if extAddr == nil {
 		panic("Could not determine external address!")
@@ -123,7 +122,7 @@ func NewDefaultListener(
 		extAddr:     extAddr,
 		connections: make(chan net.Conn, numBufferedConnections),
 	}
-	dl.BaseService = *cmn.NewBaseService(logger, "DefaultListener", dl)
+	dl.BaseService = *cmn.NewBaseService("DefaultListener", dl)
 	err = dl.Start() // Started upon construction
 	if err != nil {
 		logger.Error("Error starting base service", "err", err)

@@ -6,7 +6,7 @@ package p2p
 
 import (
 	"fmt"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 	"strings"
 )
 

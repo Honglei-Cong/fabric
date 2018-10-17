@@ -14,8 +14,8 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
-	cstypes "github.com/tendermint/tendermint/consensus/types"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cstypes "github.com/hyperledger/fabric/orderer/consensus/tendermint/consensus/types"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"

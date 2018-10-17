@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tendermint/tendermint/p2p"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
 	"github.com/tendermint/tendermint/types"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 type RoundVoteSet struct {

@@ -22,7 +22,7 @@ import (
 	cfg "github.com/tendermint/tendermint/config"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	mempl "github.com/tendermint/tendermint/mempool"
-	"github.com/tendermint/tendermint/p2p"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
 	"github.com/tendermint/tendermint/privval"
 	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
@@ -41,7 +41,7 @@ const (
 )
 
 // genesis, chain_id, priv_val
-var config *cfg.Config              // NOTE: must be reset for each _test.go file
+var config *p2p.P2PConfig              // NOTE: must be reset for each _test.go file
 var ensureTimeout = time.Second * 1 // must be in seconds because CreateEmptyBlocksInterval is
 
 func ensureDir(dir string, mode os.FileMode) {

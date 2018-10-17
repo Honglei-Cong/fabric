@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tendermint/tendermint/types"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 //-----------------------------------------------------------------------------

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/types"
-	cmn "github.com/tendermint/tendermint/libs/common"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/p2p"
+	"github.com/hyperledger/fabric/orderer/consensus/tendermint/consensus/types"
+	cmn "github.com/hyperledger/fabric/orderer/consensus/tendermint/common"
 )
 
 func init() {
@@ -31,19 +31,16 @@ func init() {
 // Heal partition and ensure A sees the commit
 func TestByzantine(t *testing.T) {
 	N := 4
-	logger := consensusLogger().With("test", "byzantine")
 	css := randConsensusNet(N, "consensus_byzantine_test", newMockTickerFunc(false), newCounter)
 
 	// give the byzantine validator a normal ticker
 	ticker := NewTimeoutTicker()
-	ticker.SetLogger(css[0].Logger)
 	css[0].SetTimeoutTicker(ticker)
 
 	switches := make([]*p2p.Switch, N)
 	p2pLogger := logger.With("module", "p2p")
 	for i := 0; i < N; i++ {
-		switches[i] = p2p.NewSwitch(config.P2P)
-		switches[i].SetLogger(p2pLogger.With("validator", i))
+		switches[i] = p2p.NewSwitch(config)
 	}
 
 	eventChans := make([]chan interface{}, N)
@@ -63,14 +60,12 @@ func TestByzantine(t *testing.T) {
 		}
 
 		eventBus := css[i].eventBus
-		eventBus.SetLogger(logger.With("module", "events", "validator", i))
 
 		eventChans[i] = make(chan interface{}, 1)
 		err := eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryNewBlock, eventChans[i])
 		require.NoError(t, err)
 
 		conR := NewConsensusReactor(css[i], true) // so we dont start the consensus states
-		conR.SetLogger(logger.With("validator", i))
 		conR.SetEventBus(eventBus)
 
 		var conRI p2p.Reactor // nolint: gotype, gosimple
@@ -94,7 +89,7 @@ func TestByzantine(t *testing.T) {
 		}
 	}()
 
-	p2p.MakeConnectedSwitches(config.P2P, N, func(i int, s *p2p.Switch) *p2p.Switch {
+	p2p.MakeConnectedSwitches(config, N, func(i int, s *p2p.Switch) *p2p.Switch {
 		// ignore new switch s, we already made ours
 		switches[i].AddReactor("CONSENSUS", reactors[i])
 		return switches[i]

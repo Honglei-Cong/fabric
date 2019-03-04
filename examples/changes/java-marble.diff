@@ -1,0 +1,163 @@
+diff --git a/examples/chaincode/java/RangeExample/src/main/java/example/RangeExample.java b/examples/chaincode/java/RangeExample/src/main/java/example/RangeExample.java
+index 4d949db..b2f40cd 100644
+--- a/examples/chaincode/java/RangeExample/src/main/java/example/RangeExample.java
++++ b/examples/chaincode/java/RangeExample/src/main/java/example/RangeExample.java
+@@ -22,63 +22,119 @@ import org.hyperledger.java.shim.ChaincodeStub;
+ 
+ import java.util.Map;
+ 
+-/**
+- * Created by cadmin on 6/30/16.
+- */
+-public class RangeExample extends ChaincodeBase {
+-    private static Log log = LogFactory.getLog(RangeExample.class);
++public class MarbleExample extends ChaincodeBase {
++    private static Log log = LogFactory.getLog(MarbleExample.class);
++
+     @java.lang.Override
+     public String run(ChaincodeStub stub, String function, String[] args) {
+-        log.info("In run, function:"+function);
+         switch (function) {
+-            case "put":
+-                for (int i = 0; i < args.length; i += 2)
+-                    stub.putState(args[i], args[i + 1]);
++            case "createMarble":
++                // args[0]: name
++                // args[1]: owner
++                // args[2]: color
++                // args[3]: size
++                String marbleName = args[0];
++                String owner = args[1];
++                String color = args[2];
++                String size = args[3];
++
++                // construct json
++                JSONObject marbleObj = new JSONObject();
++                marbleObj.put("name", marbleName);
++                marbleObj.put("owner", owner);
++                marbleObj.put("color", color);
++                marbleObj.put("size", size);
++
++                // add marble
++                String marbleJsonStr = marbleObj.toJSONString();
++                stub.putState(marbleName, marbleJsonStr);
++
++                // add owner-marble index
++                String indexName = "owner~name"
++                String compKey = stub.createCompositeKey(indexName, {owner, marbleName});
++                stub.putState(compKey, marbleJsonStr);
+                 break;
+-            case "del":
+-                for (String arg : args)
+-                    stub.delState(arg);
++
++            case "deleteMarble":
++                // args[0]: marble name
++                String marbleName = args[0];
++
++                // get marble from ledger
++                String marbleJsonStr = stub.getState(marbleName);
++                JSONParser parser = new JSONParser();
++                JSONObject marbleObj = (JSONObject)parser.parse(new StringReader(marbleJsonStr));
++
++                // delete owner-marble index
++                String owner = marbleObj.get("owner");
++                String indexName = "owner~name"
++                String compKey = stub.createCompositeKey(indexName, {owner, marbleName});
++                stub.delState(compKey);
++
++                // delete marble
++                stub.delState(marbleName);
+                 break;
+-            default:
+-                log.error("No matching case for function:"+function);
+ 
+-        }
+-        return null;
+-    }
++            case "transferMarble":
++                // args[0]: marble name
++                // args[1]: new owner of the marble
++                String marbleName = args[0];
++                String newOwner = args[1];
+ 
++                // get marble from ledger
++                String marbleJsonStr = stub.getState(marbleName);
++                JSONParser parser = new JSONParser();
++                JSONObject marbleObj = (JSONObject)parser.parse(new StringReader(marbleJsonStr));
++                String oldOwner = marbleObj.get("owner");
+ 
+-    @java.lang.Override
+-    public String query(ChaincodeStub stub, String function, String[] args) {
+-        log.info("query");
+-        switch (function){
+-            case "get": {
+-                return stub.getState(args[0]);
+-            }
+-            case "keys":{
+-                Map<String, String> keysIter = null;
+-                if (args.length >= 2) {
+-                    keysIter = stub.rangeQueryState(args[0], args[1]);
+-                }else{
+-                    keysIter = stub.rangeQueryState("","");
+-                }
++                // delete old owner-marble index
++                String indexName = "owner~name"
++                String compKey = stub.createCompositeKey(indexName, {oldOwner, marbleName});
++                stub.delState(compKey);
+ 
+-                return keysIter.keySet().toString();
++                // change marble owner
++                marbleObj.put("owner", newOwner);
++
++                // update marble
++                String marbleJsonStr = marbleObj.toJSONString();
++                stub.putState(marbleName, marbleJsonStr);
++
++                // update owner-marble index
++                compKey = stub.createCompositeKey(indexName, {newOwner, marbleName});
++                stub.putState(compKey, marbleJsonStr);
++                break;
++
++            case "queryMarbleByOwner":
++                // args[0]: marble owner
++                String owner = args[0];
++
++                // query with owner-marble index
++                String indexName = "owner~name"
++                Map<String, String> marbles = stub.partialCompositeKeyQuery(indexName, {owner});
++
++                JSONArray marbleList = new JSONArray();
++                Iterator<String> iter = marbles.keySet().iterator();
++                while (iter.hasNext()) {
++                    String key = iter.Next();
++                    String marbleJsonStr = marbles.get(key);
++                    marbleList.add(marbleJsonStr);
+                 }
+-        default:
+-            log.error("No matching case for function:"+function);
+-            return "";
+-        }
++                result = marbleList.toJSONString();
++                break;
++
++            default:
++                log.error("No matching case for function:"+function);
+ 
++        }
++        return null;
+     }
+ 
+     @java.lang.Override
+     public String getChaincodeID() {
+-        return "RangeExample";
++        return "MarbleExample";
+     }
+ 
+     public static void main(String[] args) throws Exception {
+         log.info("starting");
+-        new RangeExample().start(args);
++        new MarbleExample().start(args);
+     }
+-
+ }

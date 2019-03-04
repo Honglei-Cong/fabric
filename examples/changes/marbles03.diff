@@ -1,0 +1,851 @@
+diff --git a/examples/chaincode/go/marbles03/marbles_chaincode.go b/examples/chaincode/go/marbles03/marbles_chaincode.go
+new file mode 100644
+index 0000000..7f35a26
+--- /dev/null
++++ b/examples/chaincode/go/marbles03/marbles_chaincode.go
+@@ -0,0 +1,312 @@
++/*
++Licensed to the Apache Software Foundation (ASF) under one
++or more contributor license agreements.  See the NOTICE file
++distributed with this work for additional information
++regarding copyright ownership.  The ASF licenses this file
++to you under the Apache License, Version 2.0 (the
++"License"); you may not use this file except in compliance
++with the License.  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing,
++software distributed under the License is distributed on an
++"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++KIND, either express or implied.  See the License for the
++specific language governing permissions and limitations
++under the License.
++*/
++
++// ====CHAINCODE EXECUTION SAMPLES (CLI) ==================
++
++// ==== Invoke marbles ====
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["initMarble","marble1","blue","35","tom"]}'
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["initMarble","marble2","red","50","tom"]}'
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["initMarble","marble3","blue","70","tom"]}'
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["transferMarble","marble2","jerry"]}'
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["transferMarblesBasedOnColor","blue","jerry"]}'
++// peer chaincode invoke -C myc1 -n marbles -c '{"Args":["remove","marble1"]}'
++
++// ==== Query marbles ====
++// peer chaincode query -C myc1 -n marbles -c '{"Args":["readMarble","marble1"]}'
++// peer chaincode query -C myc1 -n marbles -c '{"Args":["queryMarblesByOwner","tom"]}'
++
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"strconv"
++	"strings"
++
++	"github.com/hyperledger/fabric/core/chaincode/shim"
++	pb "github.com/hyperledger/fabric/protos/peer"
++)
++
++// SimpleChaincode example simple Chaincode implementation
++type SimpleChaincode struct {
++}
++
++type marble struct {
++	Name  string `json:"name"`
++	Color string `json:"color"`
++	Size  int    `json:"size"`
++	Owner string `json:"owner"`
++}
++
++func main() {
++	err := shim.Start(new(SimpleChaincode))
++	if err != nil {
++		fmt.Printf("Error starting Simple chaincode: %s", err)
++	}
++}
++
++func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface) pb.Response {
++	m := marble{}
++	err := CreateObjectType(stub, m, []string{"name", "color", "owner"})
++	if err != nil {
++		return shim.Error("Failed to init marble type. " + err.Error())
++	}
++
++	return shim.Success(nil)
++}
++
++func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
++	function, args := stub.GetFunctionAndParameters()
++	fmt.Println("invoke is running " + function)
++
++	// Handle different functions
++	if function == "initMarble" {
++		//create a new marble
++		return t.initMarble(stub, args)
++	} else if function == "transferMarble" {
++		//change owner of a specific marble
++		return t.transferMarble(stub, args)
++	} else if function == "transferMarblesBasedOnColor" {
++		//transfer all marbles of a certain color
++		return t.transferMarblesBasedOnColor(stub, args)
++	} else if function == "remove" {
++		//remove a marble
++		return t.remove(stub, args)
++	} else if function == "readMarble" {
++		//read a marble
++		return t.readMarble(stub, args)
++	} else if function == "queryMarblesByOwner" {
++		//find marbles for owner X using rich query
++		return t.queryMarblesByOwner(stub, args)
++	}
++
++	fmt.Println("invoke did not find func: " + function) //error
++	return shim.Error("Received unknown function invocation")
++}
++
++func (t *SimpleChaincode) initMarble(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++	var err error
++
++	//   0       1       2     3
++	// "asdf", "blue", "35", "bob"
++	if len(args) != 4 {
++		return shim.Error("Incorrect number of arguments. Expecting 4")
++	}
++
++	// ==== Input sanitation ====
++	fmt.Println("- start init marble")
++	if len(args[0]) <= 0 {
++		return shim.Error("1st argument must be a non-empty string")
++	}
++	if len(args[1]) <= 0 {
++		return shim.Error("2nd argument must be a non-empty string")
++	}
++	if len(args[2]) <= 0 {
++		return shim.Error("3rd argument must be a non-empty string")
++	}
++	if len(args[3]) <= 0 {
++		return shim.Error("4th argument must be a non-empty string")
++	}
++	marbleName := args[0]
++	color := strings.ToLower(args[1])
++	owner := strings.ToLower(args[3])
++	size, err := strconv.Atoi(args[2])
++	if err != nil {
++		return shim.Error("3rd argument must be a numeric string")
++	}
++
++	// ==== Check if marble already exists ====
++	marble := &marble{marbleName, color, size, owner}
++	keys := map[string]string{"name": marbleName, "color": color, "owner": owner}
++
++	if _, err := GetObject(stub, marble, keys); err != nil {
++		if err != errNotFound {
++			return shim.Error("Failed to get marble: " + err.Error())
++		}
++	} else {
++		fmt.Println("This marble already exists: " + marbleName)
++		return shim.Error("This marble already exists: " + marbleName)
++	}
++
++	// === Save marble to state ===
++	err = PutObject(stub, marble)
++	if err != nil {
++		return shim.Error(err.Error())
++	}
++
++	return shim.Success(nil)
++}
++
++// ===============================================
++// readMarble - read a marble from chaincode state
++// ===============================================
++func (t *SimpleChaincode) readMarble(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++	var name, jsonResp string
++	var err error
++
++	if len(args) != 1 {
++		return shim.Error("Incorrect number of arguments. Expecting name of the marble to query")
++	}
++
++	name = args[0]
++	marble := &marble{}
++	keys := map[string]string{"name": name}
++	if _, err := GetObject(stub, marble, keys); err != nil {
++		jsonResp = "{\"Error\":\"Failed to get state for " + name + "\"}" + err.Error()
++		return shim.Error(jsonResp)
++	}
++
++	valAsbytes, err := json.Marshal(marble)
++	if err != nil {
++		return shim.Error(err.Error())
++	}
++
++	return shim.Success(valAsbytes)
++}
++
++// ==================================================
++// remove - remove a marble key/value pair from state
++// ==================================================
++func (t *SimpleChaincode) remove(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++	if len(args) != 1 {
++		return shim.Error("Incorrect number of arguments. Expecting 1")
++	}
++
++	marbleName := args[0]
++	marbleToTransfer := &marble{}
++	objID, err := GetObject(stub, marbleToTransfer, map[string]string{"name": marbleName})
++	if err != nil {
++		return shim.Error("Failed to get marble:" + err.Error())
++	}
++
++	if err := DelObject(stub, objID, marbleToTransfer); err != nil {
++		return shim.Error("Failed to delete old marble:" + err.Error())
++	}
++
++	return shim.Success(nil)
++}
++
++// ===========================================================
++// transfer a marble by setting a new owner name on the marble
++// ===========================================================
++func (t *SimpleChaincode) transferMarble(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++
++	//   0       1
++	// "name", "bob"
++	if len(args) < 2 {
++		return shim.Error("Incorrect number of arguments. Expecting 2")
++	}
++
++	marbleName := args[0]
++	newOwner := strings.ToLower(args[1])
++	fmt.Println("- start transferMarble ", marbleName, newOwner)
++
++	marbleToTransfer := &marble{}
++	objID, err := GetObject(stub, marbleToTransfer, map[string]string{"name": marbleName})
++	if err != nil {
++		return shim.Error("Failed to get marble:" + err.Error())
++	}
++
++	marbleToTransfer.Owner = newOwner //change the owner
++	if err := UpdateObject(stub, objID, marbleToTransfer); err != nil {
++		return shim.Error(err.Error())
++	}
++
++	fmt.Println("- end transferMarble (success)")
++	return shim.Success(nil)
++}
++
++// ===========================================================================================
++// transferMarblesBasedOnColor will transfer marbles of a given color to a certain new owner.
++// ===========================================================================================
++func (t *SimpleChaincode) transferMarblesBasedOnColor(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++
++	//   0       1
++	// "color", "bob"
++	if len(args) < 2 {
++		return shim.Error("Incorrect number of arguments. Expecting 2")
++	}
++
++	color := args[0]
++	newOwner := strings.ToLower(args[1])
++	fmt.Println("- start transferMarblesBasedOnColor ", color, newOwner)
++
++	// Query color
++	marble := &marble{}
++	coloredMarbleResultsIterator, err := QueryObjects(stub, marble, map[string]string{"color": color})
++	if err != nil {
++		return shim.Error(err.Error())
++	}
++	defer coloredMarbleResultsIterator.Close()
++
++	// Iterate through result set and for each marble found, transfer to newOwner
++	var i int
++	for i = 0; coloredMarbleResultsIterator.HasNext(); i++ {
++		marbleID, _, err := coloredMarbleResultsIterator.Next()
++		if err != nil {
++			return shim.Error(err.Error())
++		}
++		fmt.Printf("- found a marble color:%s name:%s\n", marble.Color, marble.Name)
++
++		marble.Owner = newOwner //change the owner
++		if err := UpdateObject(stub, marbleID, marble); err != nil {
++			return shim.Error(err.Error())
++		}
++	}
++
++	responsePayload := fmt.Sprintf("Transferred %d %s marbles to %s", i, color, newOwner)
++	fmt.Println("- end transferMarblesBasedOnColor: " + responsePayload)
++	return shim.Success([]byte(responsePayload))
++}
++
++// =========================================================================================
++// queryMarblesByOwner queries for marbles based on a passed in owner.
++// =========================================================================================
++func (t *SimpleChaincode) queryMarblesByOwner(stub shim.ChaincodeStubInterface, args []string) pb.Response {
++
++	//   0
++	// "bob"
++	if len(args) < 1 {
++		return shim.Error("Incorrect number of arguments. Expecting 1")
++	}
++
++	owner := strings.ToLower(args[0])
++	marble := &marble{}
++	coloredMarbleResultsIterator, err := QueryObjects(stub, marble, map[string]string{"owner": owner})
++	if err != nil {
++		return shim.Error(err.Error())
++	}
++	defer coloredMarbleResultsIterator.Close()
++
++	// Iterate through result set and for each marble found, transfer to newOwner
++	queryResults := make([]string, 0)
++	for coloredMarbleResultsIterator.HasNext() {
++		_, marbleBytes, err := coloredMarbleResultsIterator.Next()
++		if err != nil {
++			return shim.Error(err.Error())
++		}
++		queryResults = append(queryResults, string(marbleBytes))
++	}
++
++	bytes, err := json.Marshal(queryResults)
++	if err != nil {
++		return shim.Error(err.Error())
++	}
++	return shim.Success(bytes)
++}
+diff --git a/examples/chaincode/go/marbles03/marbles_chaincode_test.go b/examples/chaincode/go/marbles03/marbles_chaincode_test.go
+new file mode 100644
+index 0000000..a06c7fe
+--- /dev/null
++++ b/examples/chaincode/go/marbles03/marbles_chaincode_test.go
+@@ -0,0 +1,161 @@
++/*
++Licensed to the Apache Software Foundation (ASF) under one
++or more contributor license agreements.  See the NOTICE file
++distributed with this work for additional information
++regarding copyright ownership.  The ASF licenses this file
++to you under the Apache License, Version 2.0 (the
++"License"); you may not use this file except in compliance
++with the License.  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing,
++software distributed under the License is distributed on an
++"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++KIND, either express or implied.  See the License for the
++specific language governing permissions and limitations
++under the License.
++*/
++
++package main
++
++import (
++	"fmt"
++	"testing"
++
++	"encoding/json"
++	"strconv"
++
++	"github.com/hyperledger/fabric/core/chaincode/shim"
++)
++
++func checkInit(t *testing.T, stub *shim.MockStub, args [][]byte) {
++	res := stub.MockInit("1", args)
++	if res.Status != shim.OK {
++		fmt.Println("Init failed", string(res.Message))
++		t.FailNow()
++	}
++}
++
++func checkMarbleOwner(t *testing.T, stub *shim.MockStub, name string, owner string) {
++	res := stub.MockInvoke("1", [][]byte{[]byte("readMarble"), []byte(name)})
++	if res.Status != shim.OK {
++		fmt.Println("Query", name, "failed", string(res.Message))
++		t.FailNow()
++	}
++	if res.Payload == nil {
++		fmt.Println("Query", name, "failed to get value")
++		t.FailNow()
++	}
++	marble := make(map[string]interface{})
++	if err := json.Unmarshal(res.Payload, &marble); err != nil {
++		t.FailNow()
++	}
++	if marble["owner"] != owner {
++		fmt.Println("Query value", name, "(", marble["owner"], ") was not", owner, "as expected")
++		t.FailNow()
++	}
++}
++
++func checkMarbleUnexisted(t *testing.T, stub *shim.MockStub, name string) {
++	res := stub.MockInvoke("1", [][]byte{[]byte("readMarble"), []byte(name)})
++	if res.Status == shim.OK {
++		fmt.Println("Query", name, " is availble.", string(res.Payload))
++		t.FailNow()
++	}
++}
++
++func checkMarbleCountByOwner(t *testing.T, stub *shim.MockStub, owner string, count int) {
++	res := stub.MockInvoke("1", [][]byte{[]byte("queryMarblesByOwner"), []byte(owner)})
++	if res.Status != shim.OK {
++		fmt.Println("Query", owner, " failed.", string(res.Message))
++		t.FailNow()
++	}
++
++	marbleStrs := make([]string, 0)
++	if err := json.Unmarshal(res.Payload, &marbleStrs); err != nil {
++		t.FailNow()
++	}
++
++	if len(marbleStrs) != count {
++		t.FailNow()
++	}
++}
++
++func checkInvoke(t *testing.T, stub *shim.MockStub, args [][]byte) {
++	res := stub.MockInvoke("1", args)
++	if res.Status != shim.OK {
++		fmt.Println("Invoke", args, "failed", string(res.Message))
++		t.FailNow()
++	}
++}
++
++func TestMarble_Init(t *testing.T) {
++	scc := new(SimpleChaincode)
++	stub := shim.NewMockStub("marble", scc)
++
++	checkInit(t, stub, [][]byte{[]byte("init")})
++}
++
++func TestMarble_TransferMarbleByName(t *testing.T) {
++	scc := new(SimpleChaincode)
++	stub := shim.NewMockStub("marble", scc)
++
++	checkInit(t, stub, [][]byte{[]byte("init")})
++
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name1"), []byte("color1"), []byte(strconv.Itoa(1)), []byte("owner1")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name2"), []byte("color2"), []byte(strconv.Itoa(2)), []byte("owner2")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name3"), []byte("color3"), []byte(strconv.Itoa(3)), []byte("owner3")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name4"), []byte("color4"), []byte(strconv.Itoa(4)), []byte("owner4")})
++	checkMarbleOwner(t, stub, "name1", "owner1")
++
++	checkInvoke(t, stub, [][]byte{[]byte("transferMarble"), []byte("name1"), []byte("owner2")})
++	checkMarbleOwner(t, stub, "name1", "owner2")
++
++	checkInvoke(t, stub, [][]byte{[]byte("remove"), []byte("name3")})
++	checkMarbleUnexisted(t, stub, "name3")
++	checkInvoke(t, stub, [][]byte{[]byte("remove"), []byte("name2")})
++	checkMarbleUnexisted(t, stub, "name2")
++	checkInvoke(t, stub, [][]byte{[]byte("remove"), []byte("name1")})
++	checkMarbleUnexisted(t, stub, "name1")
++	checkInvoke(t, stub, [][]byte{[]byte("remove"), []byte("name4")})
++	checkMarbleUnexisted(t, stub, "name4")
++}
++
++func TestMarble_TransferMarbleByColor(t *testing.T) {
++	scc := new(SimpleChaincode)
++	stub := shim.NewMockStub("marble", scc)
++
++	checkInit(t, stub, [][]byte{[]byte("init")})
++
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name1"), []byte("color1"), []byte(strconv.Itoa(1)), []byte("owner1")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name2"), []byte("color1"), []byte(strconv.Itoa(2)), []byte("owner2")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name3"), []byte("color1"), []byte(strconv.Itoa(3)), []byte("owner3")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name4"), []byte("color1"), []byte(strconv.Itoa(4)), []byte("owner4")})
++	checkMarbleOwner(t, stub, "name3", "owner3")
++
++	checkInvoke(t, stub, [][]byte{[]byte("transferMarblesBasedOnColor"), []byte("color1"), []byte("owner2")})
++	checkMarbleOwner(t, stub, "name1", "owner2")
++	checkMarbleOwner(t, stub, "name2", "owner2")
++	checkMarbleOwner(t, stub, "name3", "owner2")
++	checkMarbleOwner(t, stub, "name4", "owner2")
++
++	checkInvoke(t, stub, [][]byte{[]byte("remove"), []byte("name4")})
++	checkMarbleUnexisted(t, stub, "name4")
++}
++
++func TestMarble_CountMarbleByOwner(t *testing.T) {
++	scc := new(SimpleChaincode)
++	stub := shim.NewMockStub("marble", scc)
++
++	checkInit(t, stub, [][]byte{[]byte("init")})
++
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name1"), []byte("color1"), []byte(strconv.Itoa(1)), []byte("owner1")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name2"), []byte("color1"), []byte(strconv.Itoa(2)), []byte("owner2")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name3"), []byte("color1"), []byte(strconv.Itoa(3)), []byte("owner3")})
++	checkInvoke(t, stub, [][]byte{[]byte("initMarble"), []byte("name4"), []byte("color1"), []byte(strconv.Itoa(4)), []byte("owner4")})
++	checkMarbleCountByOwner(t, stub, "owner3", 1)
++
++	checkInvoke(t, stub, [][]byte{[]byte("transferMarblesBasedOnColor"), []byte("color1"), []byte("owner2")})
++	checkMarbleCountByOwner(t, stub, "owner2", 4)
++}
+diff --git a/examples/chaincode/go/marbles03/marbles_helper.go b/examples/chaincode/go/marbles03/marbles_helper.go
+new file mode 100644
+index 0000000..26be372
+--- /dev/null
++++ b/examples/chaincode/go/marbles03/marbles_helper.go
+@@ -0,0 +1,360 @@
++/*
++Licensed to the Apache Software Foundation (ASF) under one
++or more contributor license agreements.  See the NOTICE file
++distributed with this work for additional information
++regarding copyright ownership.  The ASF licenses this file
++to you under the Apache License, Version 2.0 (the
++"License"); you may not use this file except in compliance
++with the License.  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing,
++software distributed under the License is distributed on an
++"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++KIND, either express or implied.  See the License for the
++specific language governing permissions and limitations
++under the License.
++*/
++
++package main
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"reflect"
++
++	"github.com/hyperledger/fabric/core/chaincode/shim"
++)
++
++type typeAttributeInfo struct {
++	Key bool `json:"key"`
++}
++
++type typeInfoStruct struct {
++	Keys    map[string]typeAttributeInfo `json:"keys"`
++	Name    string                       `json:"name"`
++	NextSeq uint64                       `json:"next_seq"`
++}
++
++var typeKeyPrefix = byte(0x10)
++var errNotFound = errors.New("Failed to found.")
++
++func getTypeName(obj interface{}) string {
++	typ := reflect.TypeOf(obj)
++	if typ.Kind() == reflect.Ptr {
++		return typ.Elem().Name()
++	} else if typ.Kind() == reflect.Struct {
++		return typ.Name()
++	}
++	return ""
++}
++
++func getTypeKey(typename string) string {
++	return string(typeKeyPrefix) + typename
++}
++func getObjectSubkey(stub shim.ChaincodeStubInterface, typename string, subkeys []string) (string, error) {
++	return stub.CreateCompositeKey(getTypeKey(typename), subkeys)
++}
++
++func getTypeInfo(stub shim.ChaincodeStubInterface, typename string) (*typeInfoStruct, error) {
++	bytes, err := stub.GetState(getTypeKey(typename))
++	if err != nil {
++		return nil, err
++	}
++	typeInfo := &typeInfoStruct{
++		Keys: make(map[string]typeAttributeInfo),
++	}
++	err = json.Unmarshal(bytes, &typeInfo)
++	if err != nil {
++		return nil, err
++	}
++	if typeInfo.Name != typename {
++		return nil, errors.New("Invalid type info")
++	}
++
++	return typeInfo, nil
++}
++
++func putTypeInfo(stub shim.ChaincodeStubInterface, typename string, typeInfo *typeInfoStruct) error {
++	bytes, err := json.Marshal(typeInfo)
++	if err != nil {
++		return err
++	}
++	return stub.PutState(getTypeKey(typename), bytes)
++}
++
++func getObjectKVs(stub shim.ChaincodeStubInterface, objID string, obj interface{}) (map[string][]byte, error) {
++	kvs := make(map[string][]byte)
++	typename := getTypeName(obj)
++	typeInfo, err := getTypeInfo(stub, typename)
++	if err != nil {
++		return kvs, err
++	}
++
++	objBytes, err := json.Marshal(obj)
++	if err != nil {
++		return kvs, err
++	}
++
++	jsonObj := make(map[string]interface{})
++	if err := json.Unmarshal(objBytes, &jsonObj); err != nil {
++		return kvs, err
++	}
++
++	if len(objID) == 0 {
++		objID = fmt.Sprintf("%d", typeInfo.NextSeq)
++	}
++	primKey, err := stub.CreateCompositeKey(typename, []string{objID})
++	if err != nil {
++		return kvs, err
++	}
++	kvs[primKey] = objBytes
++
++	for key, keyInfo := range typeInfo.Keys {
++		if keyInfo.Key {
++			attr := fmt.Sprintf("%v", jsonObj[key])
++			subKey, _ := getObjectSubkey(stub, typename, []string{key, attr, objID})
++			kvs[subKey] = []byte{0x00}
++		}
++	}
++
++	return kvs, nil
++}
++
++func incrObjectTypeNextSeq(stub shim.ChaincodeStubInterface, typename string) error {
++	typeInfo, err := getTypeInfo(stub, typename)
++	if err != nil {
++		return err
++	}
++
++	typeInfo.NextSeq += 1
++	return putTypeInfo(stub, typename, typeInfo)
++}
++
++func CreateObjectType(stub shim.ChaincodeStubInterface, obj interface{}, keys []string) error {
++	typ := reflect.TypeOf(obj)
++	if typ.Kind() == reflect.Ptr {
++		typ = typ.Elem()
++	} else if typ.Kind() != reflect.Struct {
++		return errors.New("Invalid obj type.")
++	}
++
++	typename := typ.Name()
++	typeInfo := &typeInfoStruct{
++		Keys:    make(map[string]typeAttributeInfo),
++		Name:    typename,
++		NextSeq: 1,
++	}
++
++	for i := 0; i < typ.NumField(); i++ {
++		field := typ.Field(i).Tag.Get("json")
++		typeInfo.Keys[field] = typeAttributeInfo{Key: false}
++	}
++
++	// check all keys are in type attributes
++	for _, key := range keys {
++		if _, ok := typeInfo.Keys[key]; !ok {
++			return errors.New("Invalid Key: " + key)
++		}
++		attrInfo := typeInfo.Keys[key]
++		attrInfo.Key = true
++		typeInfo.Keys[key] = attrInfo
++	}
++
++	return putTypeInfo(stub, typename, typeInfo)
++}
++
++func GetObject(stub shim.ChaincodeStubInterface, obj interface{}, keys map[string]string) (string, error) {
++	if reflect.TypeOf(obj).Kind() != reflect.Ptr {
++		return "0", errors.New("Invalid object type. require ptr to struct.")
++	}
++	ite, err := QueryObjects(stub, obj, keys)
++	if err != nil {
++		return "0", err
++	}
++
++	defer ite.Close()
++	if ite.HasNext() {
++		objID, _, err := ite.Next()
++		if err != nil {
++			return "0", err
++		}
++		return objID, nil
++	}
++	return "0", errNotFound
++}
++
++func PutObject(stub shim.ChaincodeStubInterface, obj interface{}) error {
++	return putObjectInternal(stub, "", obj)
++}
++
++func putObjectInternal(stub shim.ChaincodeStubInterface, objID string, obj interface{}) error {
++	typename := getTypeName(obj)
++	kvs, err := getObjectKVs(stub, objID, obj)
++	if err != nil {
++		return err
++	}
++
++	for k, v := range kvs {
++		err := stub.PutState(k, v)
++		if err != nil {
++			return err
++		}
++	}
++	if err := incrObjectTypeNextSeq(stub, typename); err != nil {
++		return err
++	}
++	return nil
++}
++
++func UpdateObject(stub shim.ChaincodeStubInterface, objID string, obj interface{}) error {
++	typename := getTypeName(obj)
++	var k string
++	var oldValueBytes, newValueBytes []byte
++	var err error
++
++	if k, err = stub.CreateCompositeKey(typename, []string{objID}); err != nil {
++		return err
++	}
++	if oldValueBytes, err = stub.GetState(k); err != nil {
++		return err
++	}
++	if newValueBytes, err = json.Marshal(obj); err != nil {
++		return err
++	}
++
++	// delete old obj
++	if err = json.Unmarshal(oldValueBytes, obj); err != nil {
++		return err
++	}
++	if err = DelObject(stub, objID, obj); err != nil {
++		return err
++	}
++
++	// put new obj
++	if err = json.Unmarshal(newValueBytes, obj); err != nil {
++		return err
++	}
++	if err := putObjectInternal(stub, objID, obj); err != nil {
++		return err
++	}
++
++	return nil
++}
++
++func DelObject(stub shim.ChaincodeStubInterface, objID string, obj interface{}) error {
++	kvs, err := getObjectKVs(stub, objID, obj)
++	if err != nil {
++		return err
++	}
++
++	for k := range kvs {
++		err := stub.DelState(k)
++		if err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func QueryObjects(stub shim.ChaincodeStubInterface, obj interface{}, keys map[string]string) (shim.StateQueryIteratorInterface, error) {
++	typename := getTypeName(obj)
++	typeInfo, err := getTypeInfo(stub, typename)
++	if err != nil {
++		return nil, err
++	}
++
++	ite := &ObjectIterator{
++		typename:  typename,
++		stub:      stub,
++		iters:     make([]shim.StateQueryIteratorInterface, 0),
++		currObjId: "0",
++		obj:       obj,
++	}
++	for key, val := range keys {
++		if keyInfo, ok := typeInfo.Keys[key]; ok && keyInfo.Key {
++			subKey, _ := getObjectSubkey(stub, typename, []string{key, val})
++			subIte, err := stub.RangeQueryState(subKey, subKey+"\xFF")
++			if err != nil {
++				return nil, err
++			}
++			ite.iters = append(ite.iters, subIte)
++		}
++	}
++
++	return ite, nil
++}
++
++type ObjectIterator struct {
++	typename  string
++	stub      shim.ChaincodeStubInterface
++	iters     []shim.StateQueryIteratorInterface
++	currObjId string
++	obj       interface{}
++}
++
++func (ite *ObjectIterator) HasNext() bool {
++	currObjId := "\x00"
++	iteMatched := make([]bool, len(ite.iters))
++
++	for idx := 0; idx < len(ite.iters); idx++ {
++		for !iteMatched[idx] {
++			if !ite.iters[idx].HasNext() {
++				return false
++			}
++			k, _, err := ite.iters[idx].Next()
++			if err != nil {
++				return false
++			}
++
++			_, keys, err := ite.stub.SplitCompositeKey(k)
++			objID := keys[2]
++			if objID > currObjId {
++				currObjId = objID
++				if idx != 0 {
++					// loop back
++					iteMatched = make([]bool, len(ite.iters))
++					iteMatched[idx] = true
++					idx = 0
++				} else {
++					iteMatched[idx] = true
++				}
++			} else if objID == currObjId {
++				iteMatched[idx] = true
++			}
++		}
++	}
++
++	if currObjId == "\x00" {
++		return false
++	}
++
++	ite.currObjId = currObjId
++	return true
++}
++
++func (ite *ObjectIterator) Next() (string, []byte, error) {
++	k, err := ite.stub.CreateCompositeKey(ite.typename, []string{ite.currObjId})
++	if err != nil {
++		return "0", nil, err
++	}
++	v, err := ite.stub.GetState(k)
++	if err != nil {
++		return "0", nil, err
++	}
++	if err := json.Unmarshal(v, ite.obj); err != nil {
++		return "0", nil, err
++	}
++	return ite.currObjId, v, err
++}
++
++func (ite *ObjectIterator) Close() error {
++	for _, it := range ite.iters {
++		if err := it.Close(); err != nil {
++			return err
++		}
++	}
++	return nil
++}

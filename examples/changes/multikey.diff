@@ -1,0 +1,3357 @@
+diff --git a/core/chaincode/handler.go b/core/chaincode/handler.go
+index 1836132..70b690c 100644
+--- a/core/chaincode/handler.go
++++ b/core/chaincode/handler.go
+@@ -31,6 +31,7 @@ import (
+ 	"github.com/looplab/fsm"
+ 	logging "github.com/op/go-logging"
+ 	"golang.org/x/net/context"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ const (
+@@ -382,6 +383,20 @@ func newChaincodeSupportHandler(chaincodeSupport *ChaincodeSupport, peerChatStre
+ 			{Name: pb.ChaincodeMessage_COMPLETED.String(), Src: []string{initstate, readystate}, Dst: readystate},
+ 			{Name: pb.ChaincodeMessage_GET_STATE.String(), Src: []string{readystate}, Dst: readystate},
+ 			{Name: pb.ChaincodeMessage_GET_STATE.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_CREATE_TABLE.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_CREATE_TABLE.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_DELETE_TABLE.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_DELETE_TABLE.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_INSERT_ROW.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_INSERT_ROW.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_DELETE_ROW.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_DELETE_ROW.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_REPLACE_ROW.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_REPLACE_ROW.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_GET_ROW.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_GET_ROW.String(), Src: []string{initstate}, Dst: initstate},
++			{Name: pb.ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE.String(), Src: []string{readystate}, Dst: readystate},
++			{Name: pb.ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE.String(), Src: []string{initstate}, Dst: initstate},
+ 			{Name: pb.ChaincodeMessage_RANGE_QUERY_STATE.String(), Src: []string{readystate}, Dst: readystate},
+ 			{Name: pb.ChaincodeMessage_RANGE_QUERY_STATE.String(), Src: []string{initstate}, Dst: initstate},
+ 			{Name: pb.ChaincodeMessage_RANGE_QUERY_STATE_NEXT.String(), Src: []string{readystate}, Dst: readystate},
+@@ -395,20 +410,27 @@ func newChaincodeSupportHandler(chaincodeSupport *ChaincodeSupport, peerChatStre
+ 			{Name: pb.ChaincodeMessage_TRANSACTION.String(), Src: []string{readystate}, Dst: readystate},
+ 		},
+ 		fsm.Callbacks{
+-			"before_" + pb.ChaincodeMessage_REGISTER.String():               func(e *fsm.Event) { v.beforeRegisterEvent(e, v.FSM.Current()) },
+-			"before_" + pb.ChaincodeMessage_COMPLETED.String():              func(e *fsm.Event) { v.beforeCompletedEvent(e, v.FSM.Current()) },
+-			"before_" + pb.ChaincodeMessage_INIT.String():                   func(e *fsm.Event) { v.beforeInitState(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_GET_STATE.String():               func(e *fsm.Event) { v.afterGetState(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE.String():       func(e *fsm.Event) { v.afterRangeQueryState(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE_NEXT.String():  func(e *fsm.Event) { v.afterRangeQueryStateNext(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE_CLOSE.String(): func(e *fsm.Event) { v.afterRangeQueryStateClose(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_PUT_STATE.String():               func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_DEL_STATE.String():               func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
+-			"after_" + pb.ChaincodeMessage_INVOKE_CHAINCODE.String():        func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
+-			"enter_" + establishedstate:                                     func(e *fsm.Event) { v.enterEstablishedState(e, v.FSM.Current()) },
+-			"enter_" + initstate:                                            func(e *fsm.Event) { v.enterInitState(e, v.FSM.Current()) },
+-			"enter_" + readystate:                                           func(e *fsm.Event) { v.enterReadyState(e, v.FSM.Current()) },
+-			"enter_" + endstate:                                             func(e *fsm.Event) { v.enterEndState(e, v.FSM.Current()) },
++			"before_" + pb.ChaincodeMessage_REGISTER.String():                  func(e *fsm.Event) { v.beforeRegisterEvent(e, v.FSM.Current()) },
++			"before_" + pb.ChaincodeMessage_COMPLETED.String():                 func(e *fsm.Event) { v.beforeCompletedEvent(e, v.FSM.Current()) },
++			"before_" + pb.ChaincodeMessage_INIT.String():                      func(e *fsm.Event) { v.beforeInitState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_GET_STATE.String():                  func(e *fsm.Event) { v.afterGetState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_GET_ROW.String():                    func(e *fsm.Event) { v.afterGetRow(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE.String(): func(e *fsm.Event) { v.afterRangeQueryState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE.String():          func(e *fsm.Event) { v.afterRangeQueryState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE_NEXT.String():     func(e *fsm.Event) { v.afterRangeQueryStateNext(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_RANGE_QUERY_STATE_CLOSE.String():    func(e *fsm.Event) { v.afterRangeQueryStateClose(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_PUT_STATE.String():                  func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_DEL_STATE.String():                  func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_CREATE_TABLE.String():               func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_DELETE_TABLE.String():               func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_INSERT_ROW.String():                 func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_DELETE_ROW.String():                 func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_REPLACE_ROW.String():                func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"after_" + pb.ChaincodeMessage_INVOKE_CHAINCODE.String():           func(e *fsm.Event) { v.enterBusyState(e, v.FSM.Current()) },
++			"enter_" + establishedstate:                                        func(e *fsm.Event) { v.enterEstablishedState(e, v.FSM.Current()) },
++			"enter_" + initstate:                                               func(e *fsm.Event) { v.enterInitState(e, v.FSM.Current()) },
++			"enter_" + readystate:                                              func(e *fsm.Event) { v.enterReadyState(e, v.FSM.Current()) },
++			"enter_" + endstate:                                                func(e *fsm.Event) { v.enterEndState(e, v.FSM.Current()) },
+ 		},
+ 	)
+ 
+@@ -529,7 +551,7 @@ func (handler *Handler) afterGetState(e *fsm.Event, state string) {
+ 	chaincodeLogger.Debugf("[%s]Received %s, invoking get state from ledger", shorttxid(msg.Txid), pb.ChaincodeMessage_GET_STATE)
+ 
+ 	// Query ledger for state
+-	handler.handleGetState(msg)
++	handler.handleGetRequest(msg)
+ }
+ 
+ // is this a txid for which there is a valid txsim
+@@ -545,7 +567,7 @@ func (handler *Handler) isValidTxSim(txid string, fmtStr string, args ...interfa
+ }
+ 
+ // Handles query to ledger to get state
+-func (handler *Handler) handleGetState(msg *pb.ChaincodeMessage) {
++func (handler *Handler) handleGetRequest(msg *pb.ChaincodeMessage) {
+ 	// The defer followed by triggering a go routine dance is needed to ensure that the previous state transition
+ 	// is completed before the next one is triggered. The previous state transition is deemed complete only when
+ 	// the afterGetState function is exited. Interesting bug fix!!
+@@ -566,8 +588,6 @@ func (handler *Handler) handleGetState(msg *pb.ChaincodeMessage) {
+ 			handler.serialSendAsync(serialSendMsg, nil)
+ 		}()
+ 
+-		key := string(msg.Payload)
+-
+ 		// Invoke ledger to get state
+ 		chaincodeID := handler.getCCRootName()
+ 
+@@ -580,7 +600,18 @@ func (handler *Handler) handleGetState(msg *pb.ChaincodeMessage) {
+ 			return
+ 		}
+ 
+-		res, err = txContext.txsimulator.GetState(chaincodeID, key)
++		if msg.Type == pb.ChaincodeMessage_GET_STATE {
++			key := string(msg.Payload)
++			res, err = txContext.txsimulator.GetState(chaincodeID, key)
++		} else if msg.Type == pb.ChaincodeMessage_GET_ROW {
++			rowInfo := &tb.RowInfo{}
++			err = proto.Unmarshal(msg.Payload, rowInfo)
++			if err != nil || rowInfo.GetRow() == nil {
++				chaincodeLogger.Debugf("[%s]Unable to decipher payload. Sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_ERROR)
++			} else {
++				res, err = txContext.txsimulator.GetRow(chaincodeID, rowInfo.TableName, rowInfo.GetRow().GetColumns())
++			}
++		}
+ 
+ 		if err != nil {
+ 			// Send error msg back to chaincode. GetState will not trigger event
+@@ -589,7 +620,7 @@ func (handler *Handler) handleGetState(msg *pb.ChaincodeMessage) {
+ 			serialSendMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR, Payload: payload, Txid: msg.Txid}
+ 		} else if res == nil {
+ 			//The state object being requested does not exist
+-			chaincodeLogger.Debugf("[%s]No state associated with key: %s. Sending %s with an empty payload", shorttxid(msg.Txid), key, pb.ChaincodeMessage_RESPONSE)
++			chaincodeLogger.Debugf("[%s]No state associated with key. Sending %s with an empty payload", shorttxid(msg.Txid), pb.ChaincodeMessage_RESPONSE)
+ 			serialSendMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_RESPONSE, Payload: res, Txid: msg.Txid}
+ 		} else {
+ 			// Send response msg back to chaincode. GetState will not trigger event
+@@ -602,21 +633,21 @@ func (handler *Handler) handleGetState(msg *pb.ChaincodeMessage) {
+ 
+ const maxRangeQueryStateLimit = 100
+ 
+-// afterRangeQueryState handles a RANGE_QUERY_STATE request from the chaincode.
++// afterRangeQueryState handles a RANGE_QUERY_STATE/MULTIKEY_RANGE_QUERY_STATE request from the chaincode.
+ func (handler *Handler) afterRangeQueryState(e *fsm.Event, state string) {
+ 	msg, ok := e.Args[0].(*pb.ChaincodeMessage)
+ 	if !ok {
+ 		e.Cancel(fmt.Errorf("Received unexpected message type"))
+ 		return
+ 	}
+-	chaincodeLogger.Debugf("Received %s, invoking get state from ledger", pb.ChaincodeMessage_RANGE_QUERY_STATE)
++	chaincodeLogger.Debugf("Received %s, invoking get state from ledger", msg.Type.String())
+ 
+ 	// Query ledger for state
+ 	handler.handleRangeQueryState(msg)
+ 	chaincodeLogger.Debug("Exiting GET_STATE")
+ }
+ 
+-// Handles query to ledger to rage query state
++// Handles query to ledger to range query state
+ func (handler *Handler) handleRangeQueryState(msg *pb.ChaincodeMessage) {
+ 	// The defer followed by triggering a go routine dance is needed to ensure that the previous state transition
+ 	// is completed before the next one is triggered. The previous state transition is deemed complete only when
+@@ -638,15 +669,6 @@ func (handler *Handler) handleRangeQueryState(msg *pb.ChaincodeMessage) {
+ 			handler.serialSendAsync(serialSendMsg, nil)
+ 		}()
+ 
+-		rangeQueryState := &pb.RangeQueryState{}
+-		unmarshalErr := proto.Unmarshal(msg.Payload, rangeQueryState)
+-		if unmarshalErr != nil {
+-			payload := []byte(unmarshalErr.Error())
+-			chaincodeLogger.Errorf("Failed to unmarshall range query request. Sending %s", pb.ChaincodeMessage_ERROR)
+-			serialSendMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR, Payload: payload, Txid: msg.Txid}
+-			return
+-		}
+-
+ 		iterID := util.GenerateUUID()
+ 
+ 		var txContext *transactionContext
+@@ -657,7 +679,32 @@ func (handler *Handler) handleRangeQueryState(msg *pb.ChaincodeMessage) {
+ 		}
+ 		chaincodeID := handler.getCCRootName()
+ 
+-		rangeIter, err := txContext.txsimulator.GetStateRangeScanIterator(chaincodeID, rangeQueryState.StartKey, rangeQueryState.EndKey)
++		var err error
++		var rangeIter ledger.ResultsIterator
++		if msg.Type == pb.ChaincodeMessage_RANGE_QUERY_STATE {
++			rangeQueryState := &pb.RangeQueryState{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, rangeQueryState)
++			if unmarshalErr != nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Errorf("Failed to unmarshall range query request. Sending %s", pb.ChaincodeMessage_ERROR)
++				serialSendMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR, Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			rangeIter, err = txContext.txsimulator.GetStateRangeScanIterator(chaincodeID, rangeQueryState.StartKey, rangeQueryState.EndKey)
++		} else if msg.Type == pb.ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE {
++			rangeQueryState := &tb.MultiKeyRangeQueryState{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, rangeQueryState)
++			if unmarshalErr != nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Errorf("Failed to unmarshall range query request. Sending %s", pb.ChaincodeMessage_ERROR)
++				serialSendMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR, Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			rangeIter, err = txContext.txsimulator.GetMultiKeyRangeScanIterator(chaincodeID, rangeQueryState.TableName, rangeQueryState.Columns)
++		}
++
+ 		if err != nil {
+ 			// Send error msg back to chaincode. GetState will not trigger event
+ 			payload := []byte(err.Error())
+@@ -876,6 +923,19 @@ func (handler *Handler) handleRangeQueryStateClose(msg *pb.ChaincodeMessage) {
+ 	}()
+ }
+ 
++// afterGetRow handles a GET_ROW request from the chaincode.
++func (handler *Handler) afterGetRow(e *fsm.Event, state string) {
++	msg, ok := e.Args[0].(*pb.ChaincodeMessage)
++	if !ok {
++		e.Cancel(fmt.Errorf("Received unexpected message type"))
++		return
++	}
++	chaincodeLogger.Debugf("[%s]Received %s, invoking get state from ledger", shorttxid(msg.Txid), pb.ChaincodeMessage_GET_ROW)
++
++	// Query ledger for state
++	handler.handleGetRequest(msg)
++}
++
+ // afterPutState handles a PUT_STATE request from the chaincode.
+ func (handler *Handler) afterPutState(e *fsm.Event, state string) {
+ 	_, ok := e.Args[0].(*pb.ChaincodeMessage)
+@@ -960,6 +1020,61 @@ func (handler *Handler) enterBusyState(e *fsm.Event, state string) {
+ 			// Invoke ledger to delete state
+ 			key := string(msg.Payload)
+ 			err = txContext.txsimulator.DeleteState(chaincodeID, key)
++		} else if msg.Type.String() == pb.ChaincodeMessage_CREATE_TABLE.String() {
++			table := &tb.Table{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, table)
++			if unmarshalErr != nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Debugf("[%s]Unable to decipher payload. Sending %s",
++					shorttxid(msg.Txid), pb.ChaincodeMessage_ERROR)
++				triggerNextStateMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR,
++					Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			err = txContext.txsimulator.CreateTable(chaincodeID, table.Name, table.GetColumnDefinitions())
++		} else if msg.Type.String() == pb.ChaincodeMessage_DELETE_TABLE.String() {
++			tableName := string(msg.Payload)
++			err = txContext.txsimulator.DeleteTable(chaincodeID, tableName)
++		} else if msg.Type.String() == pb.ChaincodeMessage_INSERT_ROW.String() {
++			rowInfo := &tb.RowInfo{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, rowInfo)
++			if unmarshalErr != nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Debugf("[%s]Unable to decipher payload. Sending %s",
++					shorttxid(msg.Txid), pb.ChaincodeMessage_ERROR)
++				triggerNextStateMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR,
++					Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			err = txContext.txsimulator.InsertRow(chaincodeID, rowInfo.TableName, rowInfo.GetRow())
++		} else if msg.Type.String() == pb.ChaincodeMessage_DELETE_ROW.String() {
++			rowInfo := &tb.RowInfo{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, rowInfo)
++			if unmarshalErr != nil || rowInfo.GetRow() == nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Debugf("[%s]Unable to decipher payload. Sending %s",
++					shorttxid(msg.Txid), pb.ChaincodeMessage_ERROR)
++				triggerNextStateMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR,
++					Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			err = txContext.txsimulator.DeleteRow(chaincodeID, rowInfo.TableName, rowInfo.GetRow().GetColumns())
++		} else if msg.Type.String() == pb.ChaincodeMessage_REPLACE_ROW.String() {
++			rowInfo := &tb.RowInfo{}
++			unmarshalErr := proto.Unmarshal(msg.Payload, rowInfo)
++			if unmarshalErr != nil {
++				payload := []byte(unmarshalErr.Error())
++				chaincodeLogger.Debugf("[%s]Unable to decipher payload. Sending %s",
++					shorttxid(msg.Txid), pb.ChaincodeMessage_ERROR)
++				triggerNextStateMsg = &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_ERROR,
++					Payload: payload, Txid: msg.Txid}
++				return
++			}
++
++			err = txContext.txsimulator.ReplaceRow(chaincodeID, rowInfo.TableName, rowInfo.GetRow())
+ 		} else if msg.Type.String() == pb.ChaincodeMessage_INVOKE_CHAINCODE.String() {
+ 			//check and prohibit C-call-C for CONFIDENTIAL txs
+ 			chaincodeLogger.Debugf("[%s] C-call-C", shorttxid(msg.Txid))
+diff --git a/core/chaincode/shim/chaincode.go b/core/chaincode/shim/chaincode.go
+index bdad14c..a99cece 100644
+--- a/core/chaincode/shim/chaincode.go
++++ b/core/chaincode/shim/chaincode.go
+@@ -37,6 +37,7 @@ import (
+ 	"github.com/spf13/viper"
+ 	"golang.org/x/net/context"
+ 	"google.golang.org/grpc"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // Logger for the shim package.
+@@ -54,6 +55,8 @@ type ChaincodeStub struct {
+ // Peer address derived from command line or env var
+ var peerAddress string
+ 
++var enableMultiKeyTable bool
++
+ // Start is the entry point for chaincodes bootstrap. It is not an API for
+ // chaincodes.
+ func Start(cc Chaincode) error {
+@@ -72,6 +75,10 @@ func Start(cc Chaincode) error {
+ 
+ 	chaincodeLogger.Debugf("Peer address: %s", getPeerAddress())
+ 
++	if viper.GetString("ledger.state.stateDatabase") == "goleveldb" {
++		enableMultiKeyTable = true
++	}
++
+ 	// Establish connection with validating peer
+ 	clientConn, err := newPeerClientConnection()
+ 	if err != nil {
+@@ -409,11 +416,50 @@ var (
+ )
+ 
+ // CreateTable creates a new table given the table name and column definitions
+-func (stub *ChaincodeStub) CreateTable(name string, columnDefinitions []*ColumnDefinition) error {
+-	return createTableInternal(stub, name, columnDefinitions)
++func (stub *ChaincodeStub) CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error {
++	if err := validateTableCreationParam(stub, name, columnDefinitions); err != nil {
++		return err
++	}
++
++	if !enableMultiKeyTable {
++		return createTableInternal(stub, name, columnDefinitions)
++	}
++
++	table := &tb.Table{
++		Name: name,
++		ColumnDefinitions: columnDefinitions,
++		Version: 1, 		// TODO: add version support
++		NextSeqNumber: 1,
++	}
++	payloadBytes, err := proto.Marshal(table)
++	if err != nil {
++		return fmt.Errorf("Error marshalling table: %s", err)
++	}
++
++	return stub.handler.handlePutRequest(pb.ChaincodeMessage_CREATE_TABLE, payloadBytes, stub.GetTxID())
++}
++
++func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinitions []*tb.ColumnDefinition) error {
++	table := &tb.Table{
++		Name: name,
++		ColumnDefinitions: columnDefinitions,
++	}
++	tableBytes, err := proto.Marshal(table)
++	if err != nil {
++		return fmt.Errorf("Error marshalling table: %s", err)
++	}
++	tableNameKey, err := getTableNameKey(name)
++	if err != nil {
++		return fmt.Errorf("Error creating table key: %s", err)
++	}
++	err = stub.PutState(tableNameKey, tableBytes)
++	if err != nil {
++		return fmt.Errorf("Error inserting table in state: %s", err)
++	}
++	return nil
+ }
+ 
+-func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinitions []*ColumnDefinition) error {
++func validateTableCreationParam(stub ChaincodeStubInterface, name string, columnDefinitions []*tb.ColumnDefinition) error {
+ 	_, err := getTable(stub, name)
+ 	if err == nil {
+ 		return fmt.Errorf("CreateTable operation failed. Table %s already exists.", name)
+@@ -426,7 +472,8 @@ func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinit
+ 		return errors.New("Invalid column definitions. Tables must contain at least one column.")
+ 	}
+ 
+-	hasKey := false
++	hasUniqueKey := false
++	keyCount := 0
+ 	nameMap := make(map[string]bool)
+ 	for i, definition := range columnDefinitions {
+ 
+@@ -444,51 +491,51 @@ func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinit
+ 
+ 		// Check type
+ 		switch definition.Type {
+-		case ColumnDefinition_STRING:
+-		case ColumnDefinition_INT32:
+-		case ColumnDefinition_INT64:
+-		case ColumnDefinition_UINT32:
+-		case ColumnDefinition_UINT64:
+-		case ColumnDefinition_BYTES:
+-		case ColumnDefinition_BOOL:
++		case tb.ColumnDefinition_STRING:
++		case tb.ColumnDefinition_INT32:
++		case tb.ColumnDefinition_INT64:
++		case tb.ColumnDefinition_UINT32:
++		case tb.ColumnDefinition_UINT64:
++		case tb.ColumnDefinition_BYTES:
++		case tb.ColumnDefinition_BOOL:
+ 		default:
+ 			return fmt.Errorf("Column definition %s does not have a valid type.", definition.Name)
+ 		}
+ 
++		if definition.AutoIncr {
++			hasUniqueKey = true
++			definition.Key = true
++		}
++
+ 		if definition.Key {
+-			hasKey = true
++			keyCount++
+ 		}
+ 	}
+ 
+-	if !hasKey {
+-		return errors.New("Inavlid table. One or more columns must be a key.")
++	if keyCount == 0 {
++		return errors.New("Invalid table. One or more columns must be a key.")
+ 	}
+-
+-	table := &Table{name, columnDefinitions}
+-	tableBytes, err := proto.Marshal(table)
+-	if err != nil {
+-		return fmt.Errorf("Error marshalling table: %s", err)
+-	}
+-	tableNameKey, err := getTableNameKey(name)
+-	if err != nil {
+-		return fmt.Errorf("Error creating table key: %s", err)
+-	}
+-	err = stub.PutState(tableNameKey, tableBytes)
+-	if err != nil {
+-		return fmt.Errorf("Error inserting table in state: %s", err)
++	if enableMultiKeyTable && keyCount > 1 && !hasUniqueKey {
++		return errors.New("Invalid table. There must be autoIncr Key if multiple keys are defined.")
+ 	}
++
+ 	return nil
+ }
+ 
+ // GetTable returns the table for the specified table name or ErrTableNotFound
+ // if the table does not exist.
+-func (stub *ChaincodeStub) GetTable(tableName string) (*Table, error) {
++func (stub *ChaincodeStub) GetTable(tableName string) (*tb.Table, error) {
+ 	return getTable(stub, tableName)
+ }
+ 
+ // DeleteTable deletes an entire table and all associated rows.
+ func (stub *ChaincodeStub) DeleteTable(tableName string) error {
+-	return deleteTableInternal(stub, tableName)
++	if !enableMultiKeyTable {
++		return deleteTableInternal(stub, tableName)
++	}
++
++	payloadBytes := []byte(tableName)
++	return stub.handler.handlePutRequest(pb.ChaincodeMessage_DELETE_TABLE, payloadBytes, stub.GetTxID())
+ }
+ 
+ func deleteTableInternal(stub ChaincodeStubInterface, tableName string) error {
+@@ -523,8 +570,23 @@ func deleteTableInternal(stub ChaincodeStubInterface, tableName string) error {
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *ChaincodeStub) InsertRow(tableName string, row Row) (bool, error) {
+-	return insertRowInternal(stub, tableName, row, false)
++func (stub *ChaincodeStub) InsertRow(tableName string, row tb.Row) (bool, error) {
++	if !enableMultiKeyTable {
++		return insertRowInternal(stub, tableName, row, false)
++	}
++
++	payload := &tb.RowInfo{TableName: tableName, Row: &row}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return false, errors.New("Failed to process insert row request")
++	}
++
++	// TODO: fix return values
++	err = stub.handler.handlePutRequest(pb.ChaincodeMessage_INSERT_ROW, payloadBytes, stub.GetTxID())
++	if err != nil {
++		return false, err
++	}
++	return true, nil
+ }
+ 
+ // ReplaceRow updates the row in the specified table.
+@@ -533,18 +595,56 @@ func (stub *ChaincodeStub) InsertRow(tableName string, row Row) (bool, error) {
+ // false and no error if a row does not exist the given key.
+ // flase and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *ChaincodeStub) ReplaceRow(tableName string, row Row) (bool, error) {
+-	return insertRowInternal(stub, tableName, row, true)
++func (stub *ChaincodeStub) ReplaceRow(tableName string, row tb.Row) (bool, error) {
++	if !enableMultiKeyTable {
++		return insertRowInternal(stub, tableName, row, true)
++	}
++
++	payload := &tb.RowInfo{TableName: tableName, Row: &row}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return false, errors.New("Failed to process insert row request")
++	}
++
++	// TODO: fix return values
++	err = stub.handler.handlePutRequest(pb.ChaincodeMessage_REPLACE_ROW, payloadBytes, stub.GetTxID())
++	if err != nil {
++		return false, err
++	}
++	return true, nil
+ }
+ 
+ // GetRow fetches a row from the specified table for the given key.
+-func (stub *ChaincodeStub) GetRow(tableName string, key []Column) (Row, error) {
+-	return getRowInternal(stub, tableName, key)
++func (stub *ChaincodeStub) GetRow(tableName string, key []tb.Column) (tb.Row, error) {
++	if !enableMultiKeyTable {
++		return getRowInternal(stub, tableName, key)
++	}
++
++	columns := make([]*tb.Column, 0, len(key))
++	for i := 0; i < len(key); i++ {
++		columns = append(columns, &key[i])
++	}
++	row := &tb.Row{Columns: columns}
++	payload := &tb.RowInfo{TableName: tableName, Row: row}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return tb.Row{}, fmt.Errorf("Failed to process GetRow (%s).", err)
++	}
++
++	rowBytes, err := stub.handler.handleGetRequest(pb.ChaincodeMessage_GET_ROW, payloadBytes, stub.GetTxID())
++	if err != nil {
++		return tb.Row{}, err
++	}
++	err = proto.Unmarshal(rowBytes, row)
++	if err != nil {
++		return tb.Row{}, err
++	}
++	return *row, nil
+ }
+ 
+-func getRowInternal(stub ChaincodeStubInterface, tableName string, key []Column) (Row, error) {
++func getRowInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) (tb.Row, error) {
+ 
+-	var row Row
++	var row tb.Row
+ 
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+@@ -565,23 +665,32 @@ func getRowInternal(stub ChaincodeStubInterface, tableName string, key []Column)
+ 
+ }
+ 
++func (stub *ChaincodeStub) getMultiKeyRangeQueryIterator(tableName string, key []tb.Column) (*StateRangeQueryIterator, error) {
++	// Send RANGE_QUERY_STATE message to validator chaincode support
++	columns := make([]*tb.Column, 0, len(key))
++	for i := 0; i < len(key); i++ {
++		columns = append(columns, &key[i])
++	}
++	payload := &tb.MultiKeyRangeQueryState{TableName: tableName, Columns: columns}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return nil, errors.New("Failed to process range query state request")
++	}
++
++	response, err := stub.handler.handleRangeQueryRequest(pb.ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE, payloadBytes, stub.GetTxID())
++	if err != nil {
++		return nil, err
++	}
++	return &StateRangeQueryIterator{stub.handler, stub.TxID, response, 0}, nil
++}
++
+ // GetRows returns multiple rows based on a partial key. For example, given table
+ // | A | B | C | D |
+ // where A, C and D are keys, GetRows can be called with [A, C] to return
+ // all rows that have A, C and any value for D as their key. GetRows could
+ // also be called with A only to return all rows that have A and any value
+ // for C and D as their key.
+-func (stub *ChaincodeStub) GetRows(tableName string, key []Column) (<-chan Row, error) {
+-	return getRowsInternal(stub, tableName, key)
+-}
+-
+-func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column) (<-chan Row, error) {
+-
+-	keyString, err := buildKeyString(tableName, key)
+-	if err != nil {
+-		return nil, err
+-	}
+-
++func (stub *ChaincodeStub) GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error) {
+ 	table, err := getTable(stub, tableName)
+ 	if err != nil {
+ 		return nil, err
+@@ -594,7 +703,7 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		rows := make(chan Row)
++		rows := make(chan tb.Row)
+ 		go func() {
+ 			rows <- row
+ 			close(rows)
+@@ -602,13 +711,56 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 		return rows, nil
+ 	}
+ 
++	if !enableMultiKeyTable {
++		return getRowsInternal(stub, tableName, key)
++	}
++
++	iter, err := stub.getMultiKeyRangeQueryIterator(tableName, key)
++	if err != nil {
++		return nil, err
++	}
++	rows := make(chan tb.Row)
++
++	go func() {
++		defer func() {
++			recover()
++		}()
++		for iter.HasNext() {
++			_, rowBytes, err := iter.Next()
++			if err != nil {
++				close(rows)
++			}
++
++			var row tb.Row
++			err = proto.Unmarshal(rowBytes, &row)
++			if err != nil {
++				close(rows)
++			}
++
++			rows <- row
++
++		}
++		close(rows)
++	}()
++
++	return rows, nil
++
++}
++
++func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) (<-chan tb.Row, error) {
++
++	keyString, err := buildKeyString(tableName, key)
++	if err != nil {
++		return nil, err
++	}
++
+ 	iter, err := stub.RangeQueryState(keyString+"1", keyString+":")
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error fetching rows: %s", err)
+ 	}
+ 	defer iter.Close()
+ 
+-	rows := make(chan Row)
++	rows := make(chan tb.Row)
+ 
+ 	go func() {
+ 		for iter.HasNext() {
+@@ -617,7 +769,7 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 				close(rows)
+ 			}
+ 
+-			var row Row
++			var row tb.Row
+ 			err = proto.Unmarshal(rowBytes, &row)
+ 			if err != nil {
+ 				close(rows)
+@@ -634,11 +786,29 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ }
+ 
+ // DeleteRow deletes the row for the given key from the specified table.
+-func (stub *ChaincodeStub) DeleteRow(tableName string, key []Column) error {
+-	return deleteRowInternal(stub, tableName, key)
++func (stub *ChaincodeStub) DeleteRow(tableName string, key []tb.Column) error {
++	if !enableMultiKeyTable {
++		return deleteRowInternal(stub, tableName, key)
++	}
++
++	columns := make([]*tb.Column, 0, len(key))
++	for i := 0; i < len(key); i++ {
++		columns = append(columns, &key[i])
++	}
++	payloadBytes, err := proto.Marshal(&tb.RowInfo{
++		TableName: tableName,
++		Row: &tb.Row{
++			Columns: columns,
++		},
++	})
++	if err != nil {
++		return fmt.Errorf("Failed to DeleteRow (%s)", err)
++	}
++
++	return stub.handler.handlePutRequest(pb.ChaincodeMessage_DELETE_ROW, payloadBytes, stub.GetTxID())
+ }
+ 
+-func deleteRowInternal(stub ChaincodeStubInterface, tableName string, key []Column) error {
++func deleteRowInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) error {
+ 
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+@@ -681,7 +851,7 @@ func (stub *ChaincodeStub) GetTxTimestamp() (*timestamp.Timestamp, error) {
+ 	return nil, nil
+ }
+ 
+-func getTable(stub ChaincodeStubInterface, tableName string) (*Table, error) {
++func getTable(stub ChaincodeStubInterface, tableName string) (*tb.Table, error) {
+ 
+ 	tableName, err := getTableNameKey(tableName)
+ 	if err != nil {
+@@ -695,7 +865,7 @@ func getTable(stub ChaincodeStubInterface, tableName string) (*Table, error) {
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error fetching table: %s", err)
+ 	}
+-	table := &Table{}
++	table := &tb.Table{}
+ 	err = proto.Unmarshal(tableBytes, table)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error unmarshalling table: %s", err)
+@@ -721,7 +891,7 @@ func getTableNameKey(name string) (string, error) {
+ 	return strconv.Itoa(len(name)) + name, nil
+ }
+ 
+-func buildKeyString(tableName string, keys []Column) (string, error) {
++func buildKeyString(tableName string, keys []tb.Column) (string, error) {
+ 
+ 	var keyBuffer bytes.Buffer
+ 
+@@ -736,22 +906,22 @@ func buildKeyString(tableName string, keys []Column) (string, error) {
+ 
+ 		var keyString string
+ 		switch key.Value.(type) {
+-		case *Column_String_:
++		case *tb.Column_String_:
+ 			keyString = key.GetString_()
+-		case *Column_Int32:
++		case *tb.Column_Int32:
+ 			// b := make([]byte, 4)
+ 			// binary.LittleEndian.PutUint32(b, uint32(key.GetInt32()))
+ 			// keyBuffer.Write(b)
+ 			keyString = strconv.FormatInt(int64(key.GetInt32()), 10)
+-		case *Column_Int64:
++		case *tb.Column_Int64:
+ 			keyString = strconv.FormatInt(key.GetInt64(), 10)
+-		case *Column_Uint32:
++		case *tb.Column_Uint32:
+ 			keyString = strconv.FormatUint(uint64(key.GetUint32()), 10)
+-		case *Column_Uint64:
++		case *tb.Column_Uint64:
+ 			keyString = strconv.FormatUint(key.GetUint64(), 10)
+-		case *Column_Bytes:
++		case *tb.Column_Bytes:
+ 			keyString = string(key.GetBytes())
+-		case *Column_Bool:
++		case *tb.Column_Bool:
+ 			keyString = strconv.FormatBool(key.GetBool())
+ 		}
+ 
+@@ -762,9 +932,9 @@ func buildKeyString(tableName string, keys []Column) (string, error) {
+ 	return keyBuffer.String(), nil
+ }
+ 
+-func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
++func getKeyAndVerifyRow(table tb.Table, row tb.Row) ([]tb.Column, error) {
+ 
+-	var keys []Column
++	var keys []tb.Column
+ 
+ 	if row.Columns == nil || len(row.Columns) != len(table.ColumnDefinitions) {
+ 		return keys, fmt.Errorf("Table '%s' defines %d columns, but row has %d columns.",
+@@ -776,20 +946,20 @@ func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
+ 		// Check types
+ 		var expectedType bool
+ 		switch column.Value.(type) {
+-		case *Column_String_:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_STRING
+-		case *Column_Int32:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_INT32
+-		case *Column_Int64:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_INT64
+-		case *Column_Uint32:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_UINT32
+-		case *Column_Uint64:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_UINT64
+-		case *Column_Bytes:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_BYTES
+-		case *Column_Bool:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_BOOL
++		case *tb.Column_String_:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_STRING
++		case *tb.Column_Int32:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_INT32
++		case *tb.Column_Int64:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_INT64
++		case *tb.Column_Uint32:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_UINT32
++		case *tb.Column_Uint64:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_UINT64
++		case *tb.Column_Bytes:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_BYTES
++		case *tb.Column_Bool:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_BOOL
+ 		default:
+ 			expectedType = false
+ 		}
+@@ -807,7 +977,7 @@ func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
+ 	return keys, nil
+ }
+ 
+-func isRowPresent(stub ChaincodeStubInterface, tableName string, key []Column) (bool, error) {
++func isRowPresent(stub ChaincodeStubInterface, tableName string, key []tb.Column) (bool, error) {
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+ 		return false, err
+@@ -828,7 +998,7 @@ func isRowPresent(stub ChaincodeStubInterface, tableName string, key []Column) (
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func insertRowInternal(stub ChaincodeStubInterface, tableName string, row Row, update bool) (bool, error) {
++func insertRowInternal(stub ChaincodeStubInterface, tableName string, row tb.Row, update bool) (bool, error) {
+ 
+ 	table, err := getTable(stub, tableName)
+ 	if err != nil {
+diff --git a/core/chaincode/shim/handler.go b/core/chaincode/shim/handler.go
+index 59c6d10..2c4a54f 100644
+--- a/core/chaincode/shim/handler.go
++++ b/core/chaincode/shim/handler.go
+@@ -367,6 +367,10 @@ func (handler *Handler) afterError(e *fsm.Event) {
+ // TODO: Implement method to get and put entire state map and not one key at a time?
+ // handleGetState communicates with the validator to fetch the requested state information from the ledger.
+ func (handler *Handler) handleGetState(key string, txid string) ([]byte, error) {
++	return handler.handleGetRequest(pb.ChaincodeMessage_GET_STATE, []byte(key), txid)
++}
++
++func (handler *Handler) handleGetRequest(msgType pb.ChaincodeMessage_Type, payload []byte, txid string) ([]byte, error) {
+ 	// Create the channel on which to communicate the response from validating peer
+ 	respChan, uniqueReqErr := handler.createChannel(txid)
+ 	if uniqueReqErr != nil {
+@@ -377,12 +381,11 @@ func (handler *Handler) handleGetState(key string, txid string) ([]byte, error)
+ 	defer handler.deleteChannel(txid)
+ 
+ 	// Send GET_STATE message to validator chaincode support
+-	payload := []byte(key)
+-	msg := &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_GET_STATE, Payload: payload, Txid: txid}
+-	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_GET_STATE)
++	msg := &pb.ChaincodeMessage{Type: msgType, Payload: payload, Txid: txid}
++	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), msgType.String())
+ 	responseMsg, err := handler.sendReceive(msg, respChan)
+ 	if err != nil {
+-		chaincodeLogger.Errorf("[%s]error sending GET_STATE %s", shorttxid(txid), err)
++		chaincodeLogger.Errorf("[%s]error sending %s %s", shorttxid(txid), msgType.String(), err)
+ 		return nil, errors.New("could not send msg")
+ 	}
+ 
+@@ -403,14 +406,9 @@ func (handler *Handler) handleGetState(key string, txid string) ([]byte, error)
+ }
+ 
+ // handlePutState communicates with the validator to put state information into the ledger.
+-func (handler *Handler) handlePutState(key string, value []byte, txid string) error {
++func (handler *Handler) handlePutRequest(msgType pb.ChaincodeMessage_Type, payloadBytes []byte, txid string) error {
+ 	// Check if this is a transaction
+-	chaincodeLogger.Debugf("[%s]Inside putstate", shorttxid(txid))
+-	payload := &pb.PutStateInfo{Key: key, Value: value}
+-	payloadBytes, err := proto.Marshal(payload)
+-	if err != nil {
+-		return errors.New("Failed to process put state request")
+-	}
++	chaincodeLogger.Debugf("[%s]Inside %s", shorttxid(txid), msgType.String())
+ 
+ 	// Create the channel on which to communicate the response from validating peer
+ 	respChan, uniqueReqErr := handler.createChannel(txid)
+@@ -422,11 +420,11 @@ func (handler *Handler) handlePutState(key string, value []byte, txid string) er
+ 	defer handler.deleteChannel(txid)
+ 
+ 	// Send PUT_STATE message to validator chaincode support
+-	msg := &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_PUT_STATE, Payload: payloadBytes, Txid: txid}
+-	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_PUT_STATE)
++	msg := &pb.ChaincodeMessage{Type: msgType, Payload: payloadBytes, Txid: txid}
++	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), msgType)
+ 	responseMsg, err := handler.sendReceive(msg, respChan)
+ 	if err != nil {
+-		chaincodeLogger.Errorf("[%s]error sending PUT_STATE %s", msg.Txid, err)
++		chaincodeLogger.Errorf("[%s]error sending %s %s", msg.Txid, msg.Type.String(), err)
+ 		return errors.New("could not send msg")
+ 	}
+ 
+@@ -447,6 +445,19 @@ func (handler *Handler) handlePutState(key string, value []byte, txid string) er
+ 	return errors.New("Incorrect chaincode message received")
+ }
+ 
++
++// handlePutState communicates with the validator to put state information into the ledger.
++func (handler *Handler) handlePutState(key string, value []byte, txid string) error {
++	// Check if this is a transaction
++	payload := &pb.PutStateInfo{Key: key, Value: value}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return errors.New("Failed to process put state request")
++	}
++
++	return handler.handlePutRequest(pb.ChaincodeMessage_PUT_STATE, payloadBytes, txid)
++}
++
+ // handleDelState communicates with the validator to delete a key from the state in the ledger.
+ func (handler *Handler) handleDelState(key string, txid string) error {
+ 	// Create the channel on which to communicate the response from validating peer
+@@ -485,6 +496,17 @@ func (handler *Handler) handleDelState(key string, txid string) error {
+ }
+ 
+ func (handler *Handler) handleRangeQueryState(startKey, endKey string, txid string) (*pb.RangeQueryStateResponse, error) {
++	// Send RANGE_QUERY_STATE message to validator chaincode support
++	payload := &pb.RangeQueryState{StartKey: startKey, EndKey: endKey}
++	payloadBytes, err := proto.Marshal(payload)
++	if err != nil {
++		return nil, errors.New("Failed to process range query state request")
++	}
++
++	return handler.handleRangeQueryRequest(pb.ChaincodeMessage_RANGE_QUERY_STATE, payloadBytes, txid)
++}
++
++func (handler *Handler) handleRangeQueryRequest(msgType pb.ChaincodeMessage_Type, payloadBytes []byte, txid string) (*pb.RangeQueryStateResponse, error) {
+ 	// Create the channel on which to communicate the response from validating peer
+ 	respChan, uniqueReqErr := handler.createChannel(txid)
+ 	if uniqueReqErr != nil {
+@@ -494,17 +516,11 @@ func (handler *Handler) handleRangeQueryState(startKey, endKey string, txid stri
+ 
+ 	defer handler.deleteChannel(txid)
+ 
+-	// Send RANGE_QUERY_STATE message to validator chaincode support
+-	payload := &pb.RangeQueryState{StartKey: startKey, EndKey: endKey}
+-	payloadBytes, err := proto.Marshal(payload)
+-	if err != nil {
+-		return nil, errors.New("Failed to process range query state request")
+-	}
+-	msg := &pb.ChaincodeMessage{Type: pb.ChaincodeMessage_RANGE_QUERY_STATE, Payload: payloadBytes, Txid: txid}
+-	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_RANGE_QUERY_STATE)
++	msg := &pb.ChaincodeMessage{Type: msgType, Payload: payloadBytes, Txid: txid}
++	chaincodeLogger.Debugf("[%s]Sending %s", shorttxid(msg.Txid), msgType.String())
+ 	responseMsg, err := handler.sendReceive(msg, respChan)
+ 	if err != nil {
+-		chaincodeLogger.Errorf("[%s]error sending %s", shorttxid(msg.Txid), pb.ChaincodeMessage_RANGE_QUERY_STATE)
++		chaincodeLogger.Errorf("[%s]error sending %s", shorttxid(msg.Txid), msgType.String())
+ 		return nil, errors.New("could not send msg")
+ 	}
+ 
+diff --git a/core/chaincode/shim/interfaces.go b/core/chaincode/shim/interfaces.go
+index cc4646a..4c69c50 100644
+--- a/core/chaincode/shim/interfaces.go
++++ b/core/chaincode/shim/interfaces.go
+@@ -19,6 +19,8 @@ package shim
+ 
+ import (
+ 	"github.com/golang/protobuf/ptypes/timestamp"
++	"github.com/hyperledger/fabric/core/chaincode/shim/crypto/attr"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // Chaincode interface must be implemented by all chaincodes. The fabric runs
+@@ -70,11 +72,11 @@ type ChaincodeStubInterface interface {
+ 	RangeQueryState(startKey, endKey string) (StateRangeQueryIteratorInterface, error)
+ 
+ 	// CreateTable creates a new table given the table name and column definitions
+-	CreateTable(name string, columnDefinitions []*ColumnDefinition) error
++	CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error
+ 
+ 	// GetTable returns the table for the specified table name or ErrTableNotFound
+ 	// if the table does not exist.
+-	GetTable(tableName string) (*Table, error)
++	GetTable(tableName string) (*tb.Table, error)
+ 
+ 	// DeleteTable deletes an entire table and all associated rows.
+ 	DeleteTable(tableName string) error
+@@ -85,7 +87,7 @@ type ChaincodeStubInterface interface {
+ 	// false and no error if a row already exists for the given key.
+ 	// false and a TableNotFoundError if the specified table name does not exist.
+ 	// false and an error if there is an unexpected error condition.
+-	InsertRow(tableName string, row Row) (bool, error)
++	InsertRow(tableName string, row tb.Row) (bool, error)
+ 
+ 	// ReplaceRow updates the row in the specified table.
+ 	// Returns -
+@@ -93,10 +95,10 @@ type ChaincodeStubInterface interface {
+ 	// false and no error if a row does not exist the given key.
+ 	// flase and a TableNotFoundError if the specified table name does not exist.
+ 	// false and an error if there is an unexpected error condition.
+-	ReplaceRow(tableName string, row Row) (bool, error)
++	ReplaceRow(tableName string, row tb.Row) (bool, error)
+ 
+ 	// GetRow fetches a row from the specified table for the given key.
+-	GetRow(tableName string, key []Column) (Row, error)
++	GetRow(tableName string, key []tb.Column) (tb.Row, error)
+ 
+ 	// GetRows returns multiple rows based on a partial key. For example, given table
+ 	// | A | B | C | D |
+@@ -104,10 +106,10 @@ type ChaincodeStubInterface interface {
+ 	// all rows that have A, C and any value for D as their key. GetRows could
+ 	// also be called with A only to return all rows that have A and any value
+ 	// for C and D as their key.
+-	GetRows(tableName string, key []Column) (<-chan Row, error)
++	GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error)
+ 
+ 	// DeleteRow deletes the row for the given key from the specified table.
+-	DeleteRow(tableName string, key []Column) error
++	DeleteRow(tableName string, key []tb.Column) error
+ 
+ 	// GetCallerCertificate returns caller certificate
+ 	GetCallerCertificate() ([]byte, error)
+diff --git a/core/chaincode/shim/mockstub.go b/core/chaincode/shim/mockstub.go
+index 75bbeae..5a9ac7a 100644
+--- a/core/chaincode/shim/mockstub.go
++++ b/core/chaincode/shim/mockstub.go
+@@ -25,6 +25,7 @@ import (
+ 
+ 	"github.com/golang/protobuf/ptypes/timestamp"
+ 	"github.com/op/go-logging"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // Logger for the shim package.
+@@ -191,13 +192,17 @@ func (stub *MockStub) RangeQueryState(startKey, endKey string) (StateRangeQueryI
+ }
+ 
+ // CreateTable creates a new table given the table name and column definitions
+-func (stub *MockStub) CreateTable(name string, columnDefinitions []*ColumnDefinition) error {
++func (stub *MockStub) CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error {
++	if err := validateTableCreationParam(stub, name, columnDefinitions); err != nil {
++		return err
++	}
++
+ 	return createTableInternal(stub, name, columnDefinitions)
+ }
+ 
+ // GetTable returns the table for the specified table name or ErrTableNotFound
+ // if the table does not exist.
+-func (stub *MockStub) GetTable(tableName string) (*Table, error) {
++func (stub *MockStub) GetTable(tableName string) (*tb.Table, error) {
+ 	return getTable(stub, tableName)
+ }
+ 
+@@ -212,7 +217,7 @@ func (stub *MockStub) DeleteTable(tableName string) error {
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *MockStub) InsertRow(tableName string, row Row) (bool, error) {
++func (stub *MockStub) InsertRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, false)
+ }
+ 
+@@ -222,12 +227,12 @@ func (stub *MockStub) InsertRow(tableName string, row Row) (bool, error) {
+ // false and no error if a row does not exist the given key.
+ // flase and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *MockStub) ReplaceRow(tableName string, row Row) (bool, error) {
++func (stub *MockStub) ReplaceRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, true)
+ }
+ 
+ // GetRow fetches a row from the specified table for the given key.
+-func (stub *MockStub) GetRow(tableName string, key []Column) (Row, error) {
++func (stub *MockStub) GetRow(tableName string, key []tb.Column) (tb.Row, error) {
+ 	return getRowInternal(stub, tableName, key)
+ }
+ 
+@@ -237,12 +242,12 @@ func (stub *MockStub) GetRow(tableName string, key []Column) (Row, error) {
+ // all rows that have A, C and any value for D as their key. GetRows could
+ // also be called with A only to return all rows that have A and any value
+ // for C and D as their key.
+-func (stub *MockStub) GetRows(tableName string, key []Column) (<-chan Row, error) {
++func (stub *MockStub) GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error) {
+ 	return getRowsInternal(stub, tableName, key)
+ }
+ 
+ // DeleteRow deletes the row for the given key from the specified table.
+-func (stub *MockStub) DeleteRow(tableName string, key []Column) error {
++func (stub *MockStub) DeleteRow(tableName string, key []tb.Column) error {
+ 	return deleteRowInternal(stub, tableName, key)
+ }
+ 
+diff --git a/core/chaincode/shim/mockstub_test.go b/core/chaincode/shim/mockstub_test.go
+index 65f664e..6d1cc17 100644
+--- a/core/chaincode/shim/mockstub_test.go
++++ b/core/chaincode/shim/mockstub_test.go
+@@ -22,17 +22,18 @@ import (
+ 	"testing"
+ 
+ 	"github.com/spf13/viper"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ func createTable(stub ChaincodeStubInterface) error {
+ 	// Create table one
+-	var columnDefsTableOne []*ColumnDefinition
+-	columnOneTableOneDef := ColumnDefinition{Name: "colOneTableOne",
+-		Type: ColumnDefinition_STRING, Key: true}
+-	columnTwoTableOneDef := ColumnDefinition{Name: "colTwoTableOne",
+-		Type: ColumnDefinition_INT32, Key: false}
+-	columnThreeTableOneDef := ColumnDefinition{Name: "colThreeTableOne",
+-		Type: ColumnDefinition_INT32, Key: false}
++	var columnDefsTableOne []*tb.ColumnDefinition
++	columnOneTableOneDef := tb.ColumnDefinition{Name: "colOneTableOne",
++		Type: tb.ColumnDefinition_STRING, Key: true}
++	columnTwoTableOneDef := tb.ColumnDefinition{Name: "colTwoTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
++	columnThreeTableOneDef := tb.ColumnDefinition{Name: "colThreeTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnOneTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnTwoTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnThreeTableOneDef)
+@@ -40,15 +41,15 @@ func createTable(stub ChaincodeStubInterface) error {
+ }
+ 
+ func insertRow(stub ChaincodeStubInterface, col1Val string, col2Val int32, col3Val int32) error {
+-	var columns []*Column
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
+-	col2 := Column{Value: &Column_Int32{Int32: col2Val}}
+-	col3 := Column{Value: &Column_Int32{Int32: col3Val}}
++	var columns []*tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++	col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++	col3 := tb.Column{Value: &tb.Column_Int32{Int32: col3Val}}
+ 	columns = append(columns, &col1)
+ 	columns = append(columns, &col2)
+ 	columns = append(columns, &col3)
+ 
+-	row := Row{Columns: columns}
++	row := tb.Row{Columns: columns}
+ 	ok, err := stub.InsertRow("tableOne", row)
+ 	if err != nil {
+ 		return fmt.Errorf("insertTableOne operation failed. %s", err)
+@@ -59,9 +60,9 @@ func insertRow(stub ChaincodeStubInterface, col1Val string, col2Val int32, col3V
+ 	return nil
+ }
+ 
+-func getRow(stub ChaincodeStubInterface, col1Val string) (Row, error) {
+-	var columns []Column
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
++func getRow(stub ChaincodeStubInterface, col1Val string) (tb.Row, error) {
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("tableOne", columns)
+@@ -72,10 +73,10 @@ func getRow(stub ChaincodeStubInterface, col1Val string) (Row, error) {
+ 	return row, nil
+ }
+ 
+-func getRows(stub ChaincodeStubInterface, col1Val string) ([]Row, error) {
+-	var columns []Column
++func getRows(stub ChaincodeStubInterface, col1Val string) ([]tb.Row, error) {
++	var columns []tb.Column
+ 
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 	columns = append(columns, col1)
+ 
+ 	rowChannel, err := stub.GetRows("tableOne", columns)
+@@ -83,7 +84,7 @@ func getRows(stub ChaincodeStubInterface, col1Val string) ([]Row, error) {
+ 		return nil, fmt.Errorf("getRows operation failed. %s", err)
+ 	}
+ 
+-	var rows []Row
++	var rows []tb.Row
+ 	for {
+ 		select {
+ 		case row, ok := <-rowChannel:
+diff --git a/core/ledger/kvledger/txmgmt/couchdbtxmgmt/couchdb_tx_simulator.go b/core/ledger/kvledger/txmgmt/couchdbtxmgmt/couchdb_tx_simulator.go
+index 8104081..e0d2c50 100644
+--- a/core/ledger/kvledger/txmgmt/couchdbtxmgmt/couchdb_tx_simulator.go
++++ b/core/ledger/kvledger/txmgmt/couchdbtxmgmt/couchdb_tx_simulator.go
+@@ -23,6 +23,7 @@ import (
+ 	"github.com/hyperledger/fabric/core/ledger"
+ 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwset"
+ 	logging "github.com/op/go-logging"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ type kvReadCache struct {
+@@ -208,6 +209,41 @@ func (s *CouchDBTxSimulator) GetTxSimulationResults() ([]byte, error) {
+ 	return s.getTxReadWriteSet().Marshal()
+ }
+ 
++// CreateTable implements method in interface `ledger.TxSimulator`
++func (s *CouchDBTxSimulator) CreateTable(ns string, tablename string, columnDefinitions []*tb.ColumnDefinition) error {
++	return errors.New("Not implemented.")
++}
++
++// DeleteTable implements method in interface `ledger.TxSimulator`
++func (s *CouchDBTxSimulator) DeleteTable(ns string, tablename string) error {
++	return errors.New("Not implemented.")
++}
++
++// InsertRow implements method in interface `ledger.TxSimulator`
++func (s *CouchDBTxSimulator) InsertRow(ns string, tablename string, row *tb.Row) error {
++	return errors.New("Not implemented.")
++}
++
++// DeleteRow implements method in interface `ledger.TxSimulator`
++func (s *CouchDBTxSimulator) DeleteRow(ns string, tablename string, key []*tb.Column) error {
++	return errors.New("Not implemented.")
++}
++
++// ReplaceRow implements method in interface `ledger.TxSimulator`
++func (s *CouchDBTxSimulator) ReplaceRow(ns string, tablename string, row *tb.Row) error {
++	return errors.New("Not implemented.")
++}
++
++// GetRow implements method in interface `ledger.TxSimulator`
++func (q *CouchDBTxSimulator) GetRow(ns string, tablename string, key []*tb.Column) ([]byte, error) {
++	return nil, errors.New("Not implemented.")
++}
++
++// GetMultiKeyRangeScanIterator implements method in interface `ledger.TxSimulator`
++func (q *CouchDBTxSimulator) GetMultiKeyRangeScanIterator(ns string, tablename string, key []*tb.Column) (ledger.ResultsIterator, error) {
++	return nil, errors.New("Not implemented.")
++}
++
+ // SetStateMultipleKeys implements method in interface `ledger.TxSimulator`
+ func (s *CouchDBTxSimulator) SetStateMultipleKeys(namespace string, kvs map[string][]byte) error {
+ 	for k, v := range kvs {
+diff --git a/core/ledger/kvledger/txmgmt/rwset/rwset_holder.go b/core/ledger/kvledger/txmgmt/rwset/rwset_holder.go
+index 81b57bc..7a75283 100644
+--- a/core/ledger/kvledger/txmgmt/rwset/rwset_holder.go
++++ b/core/ledger/kvledger/txmgmt/rwset/rwset_holder.go
+@@ -58,6 +58,7 @@ func (rws *RWSet) AddToWriteSet(ns string, key string, value []byte) {
+ 
+ // GetFromWriteSet return the value of a key from the write-set
+ func (rws *RWSet) GetFromWriteSet(ns string, key string) ([]byte, bool) {
++	logger.Debugf("GetFromWriteSet, %s, %s", ns, key)
+ 	nsRWs, ok := rws.rwMap[ns]
+ 	if !ok {
+ 		return nil, false
+diff --git a/core/ledger/kvledger/txmgmt/txmgr/commontests/multikey_table_test.go b/core/ledger/kvledger/txmgmt/txmgr/commontests/multikey_table_test.go
+new file mode 100644
+index 0000000..8acc79f
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/txmgr/commontests/multikey_table_test.go
+@@ -0,0 +1,485 @@
++/*
++Copyright Wanda Corp. 2017 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package commontests
++
++import (
++	"testing"
++
++	"github.com/hyperledger/fabric/core/ledger/testutil"
++	tb "github.com/hyperledger/fabric/protos/table"
++	"strconv"
++	"github.com/golang/protobuf/proto"
++	"github.com/hyperledger/fabric/core/ledger"
++	"strings"
++)
++
++func TestTable_CRUD_MultiKey(t *testing.T) {
++	for _, testEnv := range testEnvs {
++		t.Logf("Running test for TestEnv = %s", testEnv.getName())
++		testEnv.init(t)
++		testTable_CRUD_MultiKey(t, testEnv)
++		testEnv.cleanup()
++	}
++}
++
++func testTable_CRUD_MultiKey(t *testing.T, env testEnv) {
++	txMgr := env.getTxMgr()
++	txMgrHelper := newTxMgrTestHelper(t, txMgr)
++
++	ns := "ns1"
++	tablename := "testTable"
++	colDefs := []*tb.ColumnDefinition{
++		{Name: "userID", Type: tb.ColumnDefinition_UINT64, Key: true, AutoIncr: true},
++		{Name: "username", Type: tb.ColumnDefinition_STRING, Key: true},
++		{Name: "address", Type: tb.ColumnDefinition_STRING},
++	}
++
++	// create
++	s1, _ := txMgr.NewTxSimulator()
++	err := s1.CreateTable(ns, tablename, colDefs)
++	testutil.AssertEquals(t, err, nil)
++
++	// insert
++	username := "username_"
++	address := "address_"
++	usercount := 10
++	for i := 1; i < usercount; i++ {
++		row := &tb.Row{
++			Columns: []*tb.Column{
++				{Value: &tb.Column_Uint64{Uint64: uint64(0)}},
++				{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: address + strconv.Itoa(i)}},
++			},
++		}
++		err := s1.InsertRow(ns, tablename, row)
++		testutil.AssertEquals(t, err, nil)
++	}
++	s1.Done()
++	txRWSet1, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet1)
++
++	// retrieve
++	s2, _ := txMgr.NewTxSimulator()
++	for i := 1; i < usercount; i++ {
++		key := []*tb.Column{
++			{Value: &tb.Column_Uint64{Uint64: uint64(i)}},
++		}
++		dataBytes, err := s2.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++
++		row := &tb.Row{}
++		err = proto.Unmarshal(dataBytes, row)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(row.Columns) > 0, true)
++		testutil.AssertEquals(t, row.Columns[0].GetUint64(), uint64(i))
++		testutil.AssertEquals(t, row.Columns[1].GetString_(), username + strconv.Itoa(i))
++		testutil.AssertEquals(t, row.Columns[2].GetString_(), address + strconv.Itoa(i))
++	}
++	s2.Done()
++	txRWSet2, _ := s2.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet2)
++
++	// update
++	s3, _ := txMgr.NewTxSimulator()
++	for i := 1; i < usercount; i++ {
++		username := "new_name_"
++		row := &tb.Row{
++			Columns: []*tb.Column{
++				{Value: &tb.Column_Uint64{Uint64: uint64(i)}},
++				{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: address + strconv.Itoa(i)}},
++			},
++		}
++		err := s3.ReplaceRow(ns, tablename, row)
++		testutil.AssertEquals(t, err, nil)
++
++		key := []*tb.Column{
++			{Value: &tb.Column_Uint64{Uint64: uint64(i)}},
++		}
++		dataBytes, err := s3.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++		row = &tb.Row{}
++		err = proto.Unmarshal(dataBytes, row)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(row.Columns) > 0, true)
++		testutil.AssertEquals(t, row.Columns[1].GetString_(), username + strconv.Itoa(i))
++	}
++	s3.Done()
++	txRWSet3, _ := s3.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet3)
++
++	// delete
++	s4, _ := txMgr.NewTxSimulator()
++	for i := 1; i < usercount; i++ {
++		key := []*tb.Column{
++			{Value: &tb.Column_Uint64{Uint64: uint64(i)}},
++		}
++		err := s4.DeleteRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++
++		dataBytes, err := s4.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(dataBytes), 0)
++	}
++
++	err = s4.DeleteTable(ns, tablename)
++	testutil.AssertEquals(t, err, nil)
++	s4.Done()
++	txRWSet4, _ := s4.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet4)
++}
++
++func TestTable_CRUD_OneKey(t *testing.T) {
++	for _, testEnv := range testEnvs {
++		t.Logf("Running test for TestEnv = %s", testEnv.getName())
++		testEnv.init(t)
++		testTable_CRUD_OneKey(t, testEnv)
++		testEnv.cleanup()
++	}
++}
++
++func testTable_CRUD_OneKey(t *testing.T, env testEnv) {
++	txMgr := env.getTxMgr()
++	txMgrHelper := newTxMgrTestHelper(t, txMgr)
++
++	ns := "ns1"
++	tablename := "testTable"
++	colDefs := []*tb.ColumnDefinition{
++		{Name: "username", Type: tb.ColumnDefinition_STRING, Key: true},
++		{Name: "tel", Type: tb.ColumnDefinition_STRING},
++		{Name: "address", Type: tb.ColumnDefinition_STRING},
++	}
++
++	// create
++	s1, _ := txMgr.NewTxSimulator()
++	err := s1.CreateTable(ns, tablename, colDefs)
++	testutil.AssertEquals(t, err, nil)
++
++	// insert
++	username := "username_"
++	tel := "tel_"
++	address := "address_"
++	usercount := 10
++	for i := 0; i < usercount; i++ {
++		row := &tb.Row{
++			Columns: []*tb.Column{
++				{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: tel + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: address + strconv.Itoa(i)}},
++			},
++		}
++		err := s1.InsertRow(ns, tablename, row)
++		testutil.AssertEquals(t, err, nil)
++	}
++	s1.Done()
++	txRWSet1, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet1)
++
++	// retrieve
++	s2, _ := txMgr.NewTxSimulator()
++	for i := 0; i < usercount; i++ {
++		key := []*tb.Column{
++			{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++		}
++		dataBytes, err := s2.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++
++		row := &tb.Row{}
++		err = proto.Unmarshal(dataBytes, row)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(row.Columns) > 0, true)
++		testutil.AssertEquals(t, row.Columns[0].GetString_(), username + strconv.Itoa(i))
++		testutil.AssertEquals(t, row.Columns[1].GetString_(), tel + strconv.Itoa(i))
++		testutil.AssertEquals(t, row.Columns[2].GetString_(), address + strconv.Itoa(i))
++	}
++	s2.Done()
++	txRWSet2, _ := s2.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet2)
++
++	// update
++	s3, _ := txMgr.NewTxSimulator()
++	for i := 0; i < usercount; i++ {
++		tel := "new_tel_"
++		row := &tb.Row{
++			Columns: []*tb.Column{
++				{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: tel + strconv.Itoa(i)}},
++				{Value: &tb.Column_String_{String_: address + strconv.Itoa(i)}},
++			},
++		}
++		err := s3.ReplaceRow(ns, tablename, row)
++		testutil.AssertEquals(t, err, nil)
++
++		key := []*tb.Column{
++			{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++		}
++		dataBytes, err := s3.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++		row = &tb.Row{}
++		err = proto.Unmarshal(dataBytes, row)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(row.Columns) > 0, true)
++		testutil.AssertEquals(t, row.Columns[1].GetString_(), tel + strconv.Itoa(i))
++	}
++	s3.Done()
++	txRWSet3, _ := s3.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet3)
++
++	// delete
++	s4, _ := txMgr.NewTxSimulator()
++	for i := 0; i < usercount; i++ {
++		key := []*tb.Column{
++			{Value: &tb.Column_String_{String_: username + strconv.Itoa(i)}},
++		}
++		err := s4.DeleteRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++
++		dataBytes, err := s4.GetRow(ns, tablename, key)
++		testutil.AssertEquals(t, err, nil)
++		testutil.AssertEquals(t, len(dataBytes), 0)
++	}
++
++	err = s4.DeleteTable(ns, tablename)
++	testutil.AssertEquals(t, err, nil)
++	s4.Done()
++	txRWSet4, _ := s4.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet4)
++}
++
++func initTable_for_MultiKeyQuery(t *testing.T, s ledger.TxSimulator, ns, tablename string) {
++	colDefs := []*tb.ColumnDefinition{
++		{Name: "id", Type: tb.ColumnDefinition_UINT64, Key: true, AutoIncr: true},
++		{Name: "username", Type: tb.ColumnDefinition_STRING, Key: true},
++		{Name: "productId", Type: tb.ColumnDefinition_UINT64, Key: true},
++		{Name: "share", Type: tb.ColumnDefinition_UINT64},
++		{Name: "amount", Type: tb.ColumnDefinition_UINT64},
++		{Name: "unit", Type: tb.ColumnDefinition_STRING},
++	}
++
++	err := s.CreateTable(ns, tablename, colDefs)
++	testutil.AssertEquals(t, err, nil)
++
++	users := []string{"user0", "user1", "user2", "user3", "user4"}
++	prods := []uint64{1, 2, 3, 4}
++
++	for user_idx, user := range users {
++		for _, prod := range prods {
++			row := &tb.Row{
++				Columns: []*tb.Column{
++					{Value: &tb.Column_Uint64{Uint64: uint64(0)}},
++					{Value: &tb.Column_String_{String_: user}},
++					{Value: &tb.Column_Uint64{Uint64: prod}},
++					{Value: &tb.Column_Uint64{Uint64: uint64(user_idx)}},
++					{Value: &tb.Column_Uint64{Uint64: uint64(user_idx) * prod}},
++					{Value: &tb.Column_Uint64{Uint64: uint64(user_idx+1)}},
++				},
++			}
++			err := s.InsertRow(ns, tablename, row)
++			testutil.AssertEquals(t, err, nil)
++		}
++	}
++}
++
++func TestTable_Query_SingleKey(t *testing.T) {
++	for _, testEnv := range testEnvs {
++		t.Logf("Running test for TestEnv = %s", testEnv.getName())
++		testEnv.init(t)
++		testTable_Query_SingleKey(t, testEnv)
++		testEnv.cleanup()
++	}
++}
++
++func testTable_Query_SingleKey(t *testing.T, env testEnv) {
++	txMgr := env.getTxMgr()
++	txMgrHelper := newTxMgrTestHelper(t, txMgr)
++
++	ns := "ns1"
++	tablename := "testTable"
++	s1, err := txMgr.NewTxSimulator()
++	initTable_for_MultiKeyQuery(t, s1, ns, tablename)
++	s1.Done()
++	txRWSet1, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet1)
++
++	s2, _ := txMgr.NewTxSimulator()
++	var user_idx uint64 = 2
++	queryCols := []*tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_String_{String_: "user" + strconv.Itoa(int(user_idx))}},
++	}
++
++	ite, err := s2.GetMultiKeyRangeScanIterator(ns, tablename, queryCols)
++	testutil.AssertNil(t, err)
++
++	rowCount := 0
++	for {
++		kv, err := ite.Next()
++		testutil.AssertEquals(t, err, nil)
++		if kv == nil {
++			break
++		}
++
++		value := kv.(*ledger.KV).Value
++		row := tb.Row{}
++		err = proto.Unmarshal(value, &row)
++		prod_id := row.Columns[2].GetUint64()
++		testutil.AssertEquals(t, row.Columns[3].GetUint64(), user_idx)
++		testutil.AssertEquals(t, row.Columns[4].GetUint64(), user_idx * prod_id)
++		testutil.AssertEquals(t, row.Columns[5].GetUint64(), user_idx+1)
++
++		rowCount++
++	}
++	testutil.AssertEquals(t, rowCount, 4)
++	ite.Close()
++	s2.Done()
++	txRWSet2, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet2)
++
++	s3, _ := txMgr.NewTxSimulator()
++	err = s3.DeleteTable(ns, tablename)
++	testutil.AssertEquals(t, err, nil)
++	s3.Done()
++	txRWSet3, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet3)
++}
++
++func TestTable_Query_MultiKey(t *testing.T) {
++	for _, testEnv := range testEnvs {
++		t.Logf("Running test for TestEnv = %s", testEnv.getName())
++		testEnv.init(t)
++		testTable_Query_MultiKey(t, testEnv)
++		testEnv.cleanup()
++	}
++}
++
++func testTable_Query_MultiKey(t *testing.T, env testEnv) {
++	txMgr := env.getTxMgr()
++	txMgrHelper := newTxMgrTestHelper(t, txMgr)
++
++	ns := "ns1"
++	tablename := "testTable"
++	s1, err := txMgr.NewTxSimulator()
++	initTable_for_MultiKeyQuery(t, s1, ns, tablename)
++	s1.Done()
++	txRWSet1, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet1)
++
++	s2, _ := txMgr.NewTxSimulator()
++	var user_id uint64 = 2
++	var prod_id uint64 = 2
++	queryCols := []*tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_String_{String_: "user" + strconv.Itoa(int(user_id))}},
++		{Value: &tb.Column_Uint64{Uint64: prod_id}},
++	}
++
++	ite, err := s2.GetMultiKeyRangeScanIterator(ns, tablename, queryCols)
++	testutil.AssertNil(t, err)
++
++	rowCount := 0
++	for {
++		kv, err := ite.Next()
++		testutil.AssertEquals(t, err, nil)
++		if kv == nil {
++			break
++		}
++
++		value := kv.(*ledger.KV).Value
++		row := tb.Row{}
++		err = proto.Unmarshal(value, &row)
++		testutil.AssertEquals(t, row.Columns[2].GetUint64(), prod_id)
++		testutil.AssertEquals(t, row.Columns[3].GetUint64(), user_id)
++		testutil.AssertEquals(t, row.Columns[4].GetUint64(), user_id * prod_id)
++		testutil.AssertEquals(t, row.Columns[5].GetUint64(), user_id +1)
++
++		rowCount++
++	}
++	testutil.AssertEquals(t, rowCount, 1)
++	ite.Close()
++	s2.Done()
++	txRWSet2, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet2)
++
++	s3, _ := txMgr.NewTxSimulator()
++	err = s3.DeleteTable(ns, tablename)
++	testutil.AssertEquals(t, err, nil)
++	s3.Done()
++	txRWSet3, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet3)
++}
++
++func TestTable_Query_NoKey(t *testing.T) {
++	for _, testEnv := range testEnvs {
++		t.Logf("Running test for TestEnv = %s", testEnv.getName())
++		testEnv.init(t)
++		testTable_Query_NoKey(t, testEnv)
++		testEnv.cleanup()
++	}
++}
++
++func testTable_Query_NoKey(t *testing.T, env testEnv) {
++	txMgr := env.getTxMgr()
++	txMgrHelper := newTxMgrTestHelper(t, txMgr)
++
++	ns := "ns1"
++	tablename := "testTable"
++	s1, err := txMgr.NewTxSimulator()
++	initTable_for_MultiKeyQuery(t, s1, ns, tablename)
++	s1.Done()
++	txRWSet1, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet1)
++
++	s2, _ := txMgr.NewTxSimulator()
++	queryCols := []*tb.Column{}
++
++	ite, err := s2.GetMultiKeyRangeScanIterator(ns, tablename, queryCols)
++	testutil.AssertNil(t, err)
++
++	rowCount := 0
++	for {
++		kv, err := ite.Next()
++		testutil.AssertEquals(t, err, nil)
++		if kv == nil {
++			break
++		}
++
++		value := kv.(*ledger.KV).Value
++		row := tb.Row{}
++		err = proto.Unmarshal(value, &row)
++		username := row.Columns[1].GetString_()
++		user_id, err := strconv.ParseUint(strings.Split(username, "user")[1], 10, 64)
++		prod_id := row.Columns[2].GetUint64()
++		testutil.AssertEquals(t, row.Columns[2].GetUint64(), prod_id)
++		testutil.AssertEquals(t, row.Columns[3].GetUint64(), user_id)
++		testutil.AssertEquals(t, row.Columns[4].GetUint64(), user_id * prod_id)
++		testutil.AssertEquals(t, row.Columns[5].GetUint64(), user_id +1)
++
++		rowCount++
++	}
++	testutil.AssertEquals(t, rowCount, 20)
++	ite.Close()
++	s2.Done()
++	txRWSet2, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet2)
++
++	s3, _ := txMgr.NewTxSimulator()
++	err = s3.DeleteTable(ns, tablename)
++	testutil.AssertEquals(t, err, nil)
++	s3.Done()
++	txRWSet3, _ := s1.GetTxSimulationResults()
++	txMgrHelper.validateAndCommitRWSet(txRWSet3)
++}
+\ No newline at end of file
+diff --git a/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/lockbased_tx_simulator.go b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/lockbased_tx_simulator.go
+index cf35f62..7fd1e15 100644
+--- a/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/lockbased_tx_simulator.go
++++ b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/lockbased_tx_simulator.go
+@@ -18,9 +18,12 @@ package lockbasedtxmgr
+ 
+ import (
+ 	"errors"
+-
+ 	"github.com/hyperledger/fabric/common/util"
+ 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwset"
++	"fmt"
++	"github.com/golang/protobuf/proto"
++	"github.com/hyperledger/fabric/core/ledger"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // LockBasedTxSimulator is a transaction simulator used in `LockBasedTxMgr`
+@@ -30,17 +33,16 @@ type lockBasedTxSimulator struct {
+ }
+ 
+ func newLockBasedTxSimulator(txmgr *LockBasedTxMgr) *lockBasedTxSimulator {
+-	rwset := rwset.NewRWSet()
+-	helper := &queryHelper{txmgr: txmgr, rwset: rwset}
++	rws := rwset.NewRWSet()
++	helper := &queryHelper{txmgr: txmgr, rwset: rws}
+ 	id := util.GenerateUUID()
+ 	logger.Debugf("constructing new tx simulator [%s]", id)
+-	return &lockBasedTxSimulator{lockBasedQueryExecutor{helper, id}, rwset}
++	return &lockBasedTxSimulator{lockBasedQueryExecutor{helper, id}, rws}
+ }
+ 
+ // GetState implements method in interface `ledger.TxSimulator`
+ func (s *lockBasedTxSimulator) GetState(ns string, key string) ([]byte, error) {
+ 	// Remove RYWs when table APIs are removed
+-	logger.Debugf("s.rwset=%s", s.rwset)
+ 	value, ok := s.rwset.GetFromWriteSet(ns, key)
+ 	if ok {
+ 		return value, nil
+@@ -60,6 +62,369 @@ func (s *lockBasedTxSimulator) DeleteState(ns string, key string) error {
+ 	return s.SetState(ns, key, nil)
+ }
+ 
++// getTable returns the table metadata (column definitions) of the given named table.
++func (s *lockBasedTxSimulator) getTable(ns string, tableName string) (*tb.Table, error) {
++
++	tableNameKey, err := getTableNameKey(tableName)
++	if err != nil {
++		logger.Debugf("failed to getTableNameKey %s (err: %s)", tableName, err)
++		return nil, err
++	}
++
++	tableBytes, err := s.GetState(ns, tableNameKey)
++	if err != nil {
++		return nil, fmt.Errorf("Error fetching table: %s", err)
++	}
++	if tableBytes == nil {
++		return nil, errors.New("Error: Table not found")
++	}
++	table := &tb.Table{}
++	err = proto.Unmarshal(tableBytes, table)
++	if err != nil {
++		return nil, fmt.Errorf("Error unmarshalling table: %s", err)
++	}
++
++	return table, nil
++}
++
++// GetRow implements method in interface `ledger.QueryExecutor`
++func (s *lockBasedTxSimulator) GetRow(ns string, tablename string, key []*tb.Column) ([]byte, error) {
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return nil, err
++	}
++
++	keyCount := getKeyCount(table)
++
++	// find AutoIncr key
++	var keyString string
++	keyIdx := 0
++	for _, col := range table.ColumnDefinitions {
++		if keyIdx < len(key) && (col.AutoIncr || (keyCount == 1 && col.Key)) {
++			if isKeyDefined(key[keyIdx]) {
++				keyString, err = buildKeyString(tablename, []*tb.Column{key[keyIdx]})
++				logger.Debugf("GetRow, table: %s, found Unique key %s(%d, %d).", tablename, keyString, keyIdx, len(key))
++			} else {
++				logger.Debugf("GetRow, table: %s, Unique key undefined, try getRows.", tablename)
++			}
++			break
++		}
++		if col.Key {
++			keyIdx++
++		}
++	}
++	if err != nil {
++		return nil, err
++	}
++
++	if len(keyString) > 0 {
++		// autoIncr/single key provided, GetState from primary-table
++		logger.Debugf("GetRow, table: %s, key: %s", tablename, keyString)
++		return s.GetState(ns, keyString)
++	}
++
++	// GetRow with MultiKey-RangeScanIterator
++	ite, err := s.GetMultiKeyRangeScanIterator(ns, tablename, key)
++	if err != nil {
++		return nil, err
++	}
++	if ite == nil {
++		logger.Debugf("getRowFromSubTable, table: %s, create iterator failed.", tablename)
++		return nil, errors.New("failed to create MultiKey iterator for table")
++
++	}
++
++	defer ite.Close()
++	kv, err := ite.Next()
++	if kv == nil || err != nil {
++		return nil, nil
++	}
++	value := kv.(*ledger.KV).Value
++	logger.Debugf("getRowFromSubTable, table: %s, key: %s, value(%v)", tablename, kv.(*ledger.KV).Key, value)
++	return value, nil
++}
++
++// GetMultiKeyRangeScanIterator implements method in interface `ledger.QueryExecutor`
++func (s *lockBasedTxSimulator) GetMultiKeyRangeScanIterator(ns string, tablename string, key []*tb.Column) (ledger.ResultsIterator, error) {
++	return newMultiKeyRangeScanIterator(s, ns, tablename, key)
++}
++
++// CreateTable implements method in interface `ledger.TxSimulator`
++func (s *lockBasedTxSimulator) CreateTable(ns string, tablename string, columnDefinitions []*tb.ColumnDefinition) error {
++	s.helper.checkDone()
++
++	subTables, err := buildSubTableList(tablename, columnDefinitions)
++	if err != nil {
++		return err
++	}
++
++	for idx, subTable := range subTables {
++		var table *tb.Table
++		if idx == 0 {
++			table = &tb.Table{Name: subTable.name, ColumnDefinitions: subTable.columnDefs, NextSeqNumber: 1}
++		} else {
++			table = &tb.Table{Name: subTable.name, ColumnDefinitions: subTable.columnDefs}
++		}
++		tableBytes, err := proto.Marshal(table)
++		if err != nil {
++			return fmt.Errorf("Error marshalling table: %s", err)
++		}
++		tableNameKey, err := getTableNameKey(subTable.name)
++		if err != nil {
++			return fmt.Errorf("Error creating table key: %s", err)
++		}
++		err = s.SetState(ns, tableNameKey, tableBytes)
++		if err != nil {
++			return fmt.Errorf("Error inserting table in state: %s", err)
++		}
++		logger.Debugf("CreateTable, SetState %s %s.", ns, tableNameKey)
++	}
++	return nil
++}
++
++// DeleteTable implements method in interface `ledger.TxSimulator`
++func (s *lockBasedTxSimulator) DeleteTable(ns string, tablename string) error {
++	s.helper.checkDone()
++
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return err
++	}
++
++	subTables, err := buildSubTableList(table.Name, table.ColumnDefinitions)
++	if err != nil {
++		return err
++	}
++	for i := len(subTables) - 1; i >= 0; i-- {
++		err = s.deleteTableInternal(ns, subTables[i].name)
++		if err != nil {
++			break
++		}
++		tableNameKey, err := getTableNameKey(subTables[i].name)
++		if err != nil {
++			break
++		}
++		err = s.DeleteState(ns, tableNameKey)
++		if err != nil {
++			break
++		}
++	}
++
++	return err
++}
++
++func (s *lockBasedTxSimulator) deleteTableInternal(ns string, tableName string) error {
++	// remove all rows in table
++
++	tableNameKey, err := getTableNameKey(tableName)
++	if err != nil {
++		return err
++	}
++	rangeIter, err := s.GetStateRangeScanIterator(ns, tableNameKey+"1", tableNameKey+":")
++	if err != nil {
++		return err
++	}
++
++	deletedRowCount := 0
++	for {
++		kv, err := rangeIter.Next()
++		if err != nil|| kv == nil {
++			break
++		}
++		key := kv.(*ledger.KV).Key
++		s.DeleteState(ns, key)
++
++		// logger.Debugf("deleteTableInternal, table: %s, key: %s", tableName, key)
++		deletedRowCount++
++	}
++
++	rangeIter.Close()
++	logger.Debugf("deleteTableInternal, table: %s, tableNameKey: %s, deleted: %d rows",
++		tableName, tableNameKey, deletedRowCount)
++	return err
++}
++
++// InsertRow implements method in interface `ledger.TxSimulator`
++func (s *lockBasedTxSimulator) InsertRow(ns string, tablename string, row *tb.Row) error {
++	s.helper.checkDone()
++
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return err
++	}
++
++	subTables, err := buildSubTableList(table.Name, table.ColumnDefinitions)
++	if err != nil {
++		return err
++	}
++
++	subRows, err := buildSubRowList(table, subTables, row.Columns, true)
++	if err != nil {
++		return err
++	}
++
++	// update AutoIncr if needed
++	for _, colDef := range table.ColumnDefinitions {
++		if colDef.AutoIncr {
++			table.NextSeqNumber += 1
++			tableBytes, err := proto.Marshal(table)
++			if err != nil {
++				return err
++			}
++			tableNameKey, err := getTableNameKey(tablename)
++			if err != nil {
++				return err
++			}
++			err = s.SetState(ns, tableNameKey, tableBytes)
++			if err != nil {
++				return err
++			}
++			logger.Debugf("update table %s, nextSeq: %d", tablename, table.NextSeqNumber)
++		}
++	}
++
++	// insert to tables
++	for _, row := range subRows {
++		err := s.SetState(ns, row.key, row.value)
++		if err != nil {
++			break
++		}
++	}
++
++	return err
++}
++
++// DeleteRow implements method in interface `ledger.TxSimulator`
++func (s *lockBasedTxSimulator) DeleteRow(ns string, tablename string, key []*tb.Column) error {
++	s.helper.checkDone()
++
++	// get table
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return err
++	}
++
++	keyCount := getKeyCount(table)
++
++	// find with unique key
++	var keyString string
++	keyIdx := 0
++	for _, col := range table.ColumnDefinitions {
++		if col.AutoIncr || (keyCount == 1 && col.Key) {
++			keyString, err = buildKeyString(tablename, []*tb.Column{key[keyIdx]})
++		}
++		if col.Key {
++			keyIdx++
++		}
++	}
++	if err != nil {
++		return err
++	}
++
++	rowBytes, err := s.GetState(ns, keyString)
++	if err != nil {
++		return err
++	}
++
++	row := &tb.Row{}
++	err = proto.Unmarshal(rowBytes, row)
++	if err != nil {
++		return err
++	}
++
++	subTables, err := buildSubTableList(table.Name, table.ColumnDefinitions)
++	if err != nil {
++		return err
++	}
++
++	// get values from primary table
++	// construct sub-keys
++	subRows, err := buildSubRowList(table, subTables, row.Columns, false)
++	if err != nil {
++		return err
++	}
++
++	for _, row := range subRows {
++		err = s.DeleteState(ns, row.key)
++		if err != nil {
++			return err
++		}
++		logger.Debugf("DeleteRow, key: %s", row.key)
++	}
++
++	return err
++}
++
++// ReplaceRow implements method in interface `ledger.TxSimulator`
++func (s *lockBasedTxSimulator) ReplaceRow(ns string, tablename string, row *tb.Row) error {
++	s.helper.checkDone()
++
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return err
++	}
++	if len(row.Columns) != len(table.ColumnDefinitions) {
++		return errors.New("ReplaceRow, columns in row is not same as defined in table.")
++	}
++
++	// find unique key
++	var keyString string
++	for idx, col := range table.ColumnDefinitions {
++		if col.AutoIncr || (len(table.ColumnDefinitions) == 1 && col.Key) {
++			keyString, err = buildKeyString(tablename, []*tb.Column{row.Columns[idx]})
++			if err != nil {
++				return err
++			}
++			break
++		}
++	}
++
++	oldRowBytes, err := s.GetState(ns, keyString)
++	if err != nil {
++		return err
++	}
++	if len(oldRowBytes) == 0 {
++		return s.InsertRow(ns, tablename, row)
++	}
++
++	oldRow := &tb.Row{}
++	if err = proto.Unmarshal(oldRowBytes, oldRow); err != nil {
++		return err
++	}
++
++	subTables, err := buildSubTableList(tablename, table.ColumnDefinitions)
++	if err != nil {
++		return err
++	}
++
++	oldSubRows, err := buildSubRowList(table, subTables, oldRow.Columns, false)
++	if err != nil {
++		return err
++	}
++
++	subRows, err := buildSubRowList(table, subTables, row.Columns, false)
++	if err != nil {
++		return err
++	}
++
++	for idx, subRow := range subRows {
++		if idx == 0 {
++			// skip primary table
++			continue
++		}
++		if table.ColumnDefinitions[idx].Key &&
++			subRow.key != oldSubRows[idx].key {
++			if err = s.DeleteState(ns, oldSubRows[idx].key); err != nil {
++				return err
++			}
++			s.SetState(ns, subRow.key, subRow.value)
++		}
++	}
++
++	logger.Debugf("ReplaceRow, table: %s, replacing key: %s", tablename, keyString)
++	return s.SetState(ns, subRows[0].key, subRows[0].value)
++}
++
+ // SetStateMultipleKeys implements method in interface `ledger.TxSimulator`
+ func (s *lockBasedTxSimulator) SetStateMultipleKeys(namespace string, kvs map[string][]byte) error {
+ 	for k, v := range kvs {
+diff --git a/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_helper.go b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_helper.go
+new file mode 100644
+index 0000000..946b30b
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_helper.go
+@@ -0,0 +1,231 @@
++/*
++Copyright Wanda Corp. 2017 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package lockbasedtxmgr
++
++import (
++	"strconv"
++	"strings"
++	"bytes"
++	"errors"
++	"github.com/golang/protobuf/proto"
++	tb "github.com/hyperledger/fabric/protos/table"
++)
++
++type subTableInfo struct {
++	name       string
++	columnDefs []*tb.ColumnDefinition
++}
++
++type subRowInfo struct {
++	key   string
++	value []byte
++}
++
++func formatKey(key *tb.Column) string {
++	if key == nil {
++		return ""
++	}
++
++	var keyString string
++	switch key.Value.(type) {
++	case *tb.Column_String_:
++		keyString = key.GetString_()
++	case *tb.Column_Int32:
++		keyString = strconv.FormatInt(int64(key.GetInt32()), 10)
++	case *tb.Column_Int64:
++		keyString = strconv.FormatInt(key.GetInt64(), 10)
++	case *tb.Column_Uint32:
++		keyString = strconv.FormatUint(uint64(key.GetUint32()), 10)
++	case *tb.Column_Uint64:
++		keyString = strconv.FormatUint(key.GetUint64(), 10)
++	case *tb.Column_Bytes:
++		keyString = string(key.GetBytes())
++	case *tb.Column_Bool:
++		keyString = strconv.FormatBool(key.GetBool())
++	}
++
++	return strconv.Itoa(len(keyString)) + keyString
++}
++
++func compareKey(key1 *tb.Column, key2 *tb.Column) int {
++	if key1 == nil {
++		return -1
++	} else if key1 == nil && key2 == nil {
++		return 0
++	} else if key2 == nil {
++		return 1
++	}
++
++	return strings.Compare(formatKey(key1), formatKey(key2))
++}
++
++func getKeyCount(table *tb.Table) int {
++	if table == nil {
++		return 0
++	}
++
++	keyCount := 0
++	for _, col := range table.ColumnDefinitions {
++		if col.Key {
++			keyCount++
++		}
++	}
++
++	return keyCount
++}
++
++func buildKeyString(tableName string, keys []*tb.Column) (string, error) {
++
++	var keyBuffer bytes.Buffer
++
++	tableNameKey, err := getTableNameKey(tableName)
++	if err != nil {
++		return "", err
++	}
++
++	keyBuffer.WriteString(tableNameKey)
++	for _, key := range keys {
++		keyBuffer.WriteString(formatKey(key))
++	}
++
++	return keyBuffer.String(), nil
++}
++
++
++func isKeyDefined(key *tb.Column) bool {
++	if key == nil {
++		return false
++	}
++
++	switch key.Value.(type) {
++	case *tb.Column_Bytes:
++		if len(key.GetBytes()) == 0 {
++			return false
++		}
++	}
++
++	return true
++}
++
++func getTableNameKey(name string) (string, error) {
++	if len(name) == 0 {
++		return "", errors.New("Inavlid table name. Table name must be 1 or more characters.")
++	}
++
++	return strconv.Itoa(len(name)) + name, nil
++}
++
++func getSubTableName(tableName string, columnDefs []*tb.ColumnDefinition) string {
++	name := tableName + "_sub"
++	for _, def := range columnDefs {
++		name += "_" + def.Name
++	}
++	return name
++}
++
++func buildSubTableList(tablename string, columnDefs []*tb.ColumnDefinition) ([]*subTableInfo, error) {
++
++	subTables := make([]*subTableInfo, 0, len(columnDefs))
++
++	keyCount := 0
++	var uniqKey *tb.ColumnDefinition = nil
++	for _, definition := range columnDefs {
++		if definition.Key {
++			if definition.AutoIncr {
++				uniqKey = definition
++			}
++			keyCount++
++		}
++	}
++
++	if keyCount == 1 {
++		logger.Debugf("BuildSubTable %s, only one key defined, skip sub-tables", tablename)
++		subTables = append(subTables, &subTableInfo{tablename, columnDefs})
++		return subTables, nil
++	}
++
++	subTables = append(subTables, &subTableInfo{tablename, columnDefs})
++	logger.Debugf("BuildSubTable %s, prim-table %s", tablename, tablename)
++
++	for _, definition := range columnDefs {
++		if definition.Key && definition != uniqKey {
++			// create sub-table
++			columnDefs := []*tb.ColumnDefinition{definition, uniqKey}
++			subTableName := getSubTableName(tablename, columnDefs)
++			subTables = append(subTables, &subTableInfo{subTableName, columnDefs})
++			logger.Debugf("BuildSubTable %s, sub-table %s", tablename, subTableName)
++		}
++	}
++
++	return subTables, nil
++}
++
++func buildSubRowList(primTable *tb.Table, tables []*subTableInfo, columns []*tb.Column, autoUpdateNextSeq bool) ([]subRowInfo, error) {
++	subRows := make([]subRowInfo, 0, len(tables))
++
++	// first primary table, only using the primary-unique-key
++	var primKey *tb.Column
++	for idx, colDef := range primTable.ColumnDefinitions {
++		if colDef.AutoIncr || (len(tables) == 1 && colDef.Key) {
++			if colDef.AutoIncr && autoUpdateNextSeq {
++				primKey = &tb.Column{Value: &tb.Column_Uint64{Uint64: primTable.NextSeqNumber}}
++				columns[idx] = primKey
++			} else {
++				primKey = columns[idx]
++			}
++			subRowKey, err := buildKeyString(primTable.Name, []*tb.Column{primKey})
++			if err != nil {
++				return nil, err
++			}
++			subRowBytes, err := proto.Marshal(&tb.Row{Columns: columns})
++			if err != nil {
++				return nil, err
++			}
++
++			subRows = append(subRows, subRowInfo{key: subRowKey, value: subRowBytes})
++			break
++		}
++	}
++
++	// build rows for sub tables
++	for _, subTable := range tables[1:] {
++		subKeys := make([]*tb.Column, 0, 2)
++
++		// 1. sub-key of the sub-table
++		for idx, primColDef := range primTable.ColumnDefinitions {
++			if primColDef == subTable.columnDefs[0] {
++				subKeys = append(subKeys, columns[idx])
++				break
++			}
++		}
++		// 2. primKey
++		subKeys = append(subKeys, primKey)
++		subRowKey, err := buildKeyString(subTable.name, subKeys)
++		if err != nil {
++			return nil, err
++		}
++		subRowBytes, err := proto.Marshal(&tb.Row{Columns: []*tb.Column{primKey}})
++		if err != nil {
++			return nil, err
++		}
++		subRows = append(subRows, subRowInfo{key: subRowKey, value: subRowBytes})
++		logger.Debugf("Ledger buildSubRow table: %s, key: %s", subTable.name, subRowKey)
++	}
++
++	return subRows, nil
++}
++
+diff --git a/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_iterator.go b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_iterator.go
+new file mode 100644
+index 0000000..70346a0
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/txmgr/lockbasedtxmgr/multikey_table_iterator.go
+@@ -0,0 +1,200 @@
++/*
++Copyright Wanda Corp. 2017 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package lockbasedtxmgr
++
++import (
++	"github.com/golang/protobuf/proto"
++	"github.com/hyperledger/fabric/core/ledger"
++	tb "github.com/hyperledger/fabric/protos/table"
++)
++
++// MultiKeyRangeScanIterator - an implementation of interface 'statemgmt.RangeScanIterator'
++// This provides a wrapper on top of more than one underlying iterators
++type MultiKeyRangeScanIterator struct {
++	s           *lockBasedTxSimulator
++	ns          string
++	tablename   string
++	keys        []*tb.Column
++	keyInColumn []int
++	iter        ledger.ResultsIterator
++
++	currPrimKey *tb.Column
++}
++
++// TODO: support range-bound on the key
++func newMultiKeyRangeScanIterator(s *lockBasedTxSimulator, ns string, tablename string, keys []*tb.Column) (ledger.ResultsIterator, error) {
++	// get table
++	table, err := s.getTable(ns, tablename)
++	if err != nil {
++		return nil, err
++	}
++
++	keyDefined := false
++	for _, k := range keys {
++		if isKeyDefined(k) {
++			keyDefined = true
++		}
++	}
++	if !keyDefined {
++		// loop with primary-key
++		keyString, err := buildKeyString(tablename, []*tb.Column{})
++		if err != nil {
++			return nil, err
++		}
++		logger.Debugf("switch to %s StateRangeScan iterator, primaryKey %s", tablename, keyString)
++		return s.GetStateRangeScanIterator(ns, keyString+"1", keyString+":")
++	}
++
++	// check if keys contains primKey
++	for idx, col := range table.ColumnDefinitions {
++		if col.AutoIncr && idx < len(keys) {
++			if !isKeyDefined(keys[idx]) {
++				// unique key not contained
++				break
++			}
++			// primKey contained
++			keyString, err := buildKeyString(tablename, []*tb.Column{keys[idx]})
++			if err != nil {
++				return nil, err
++			}
++
++			logger.Debugf("creating %s MultiKey iterator, found primaryKey %s", tablename, keyString)
++			return s.GetStateRangeScanIterator(ns, keyString+"1", keyString+":")
++		}
++	}
++
++	subTables, err := buildSubTableList(tablename, table.ColumnDefinitions)
++	if err != nil {
++		return nil, err
++	}
++
++	// build sub-iters
++	keyInColumn := make([]int, len(table.ColumnDefinitions))
++	var iter ledger.ResultsIterator
++	keyIdx := 0
++	for i, col := range table.ColumnDefinitions {
++		if col.Key && keyIdx < len(keys) && isKeyDefined(keys[keyIdx]) {
++			keyInColumn[keyIdx] = i
++		} else {
++			keyInColumn[keyIdx] = -1
++		}
++
++		if col.Key && keyIdx < len(keys) && !col.AutoIncr {
++			if isKeyDefined(keys[keyIdx]) && iter == nil {
++				// create iter for first Key
++				keyString, err := buildKeyString(subTables[keyIdx].name, []*tb.Column{keys[keyIdx]})
++				if err != nil {
++					return nil, err
++				}
++				logger.Debugf("creating %s MultiKey iterator, subKeyString: %s", tablename, keyString)
++				iter, err = s.GetStateRangeScanIterator(ns, keyString+"1", keyString+":")
++				if err != nil {
++					return nil, err
++				}
++				keyInColumn[keyIdx] = -1
++			}
++		}
++		if col.Key {
++			keyIdx++
++		}
++	}
++	logger.Debugf("creating %s MultiKey iterator, keyIdx %d, initialized iterator", tablename, keyIdx)
++	return &MultiKeyRangeScanIterator{
++		s:           s,
++		ns:          ns,
++		tablename:   tablename,
++		keys:        keys,
++		keyInColumn: keyInColumn,
++		iter:        iter,
++		currPrimKey: nil,
++	}, nil
++}
++
++func getIteratorPrimaryKey(data []byte) (*tb.Column, error) {
++	row := &tb.Row{}
++	err := proto.Unmarshal(data, row)
++	if err != nil {
++		return nil, err
++	}
++
++	return row.Columns[0], nil
++}
++
++func (itr *MultiKeyRangeScanIterator) Next() (ledger.QueryResult, error) {
++	if itr.s == nil {
++		return nil, nil
++	}
++
++	var err error
++	for {
++		kv, err := itr.iter.Next()
++		if kv == nil || err != nil {
++			break
++		}
++		// 1. get primary-key
++		value := kv.(*ledger.KV).Value
++		primKey, err := getIteratorPrimaryKey(value)
++		if err != nil {
++			break
++		}
++		// 2. get row
++		keyStr, rowBytes := itr.getKeyValueInternal(primKey)
++		row := tb.Row{}
++		err = proto.Unmarshal(rowBytes, &row)
++		if err != nil {
++			break
++		}
++		// loop all columns in row, if all matched with keys[], break
++		i := 0
++		for ; i < len(itr.keys); i++ {
++			if itr.keyInColumn[i] < 0 {
++				continue
++			}
++			if compareKey(row.Columns[itr.keyInColumn[i]], itr.keys[i]) != 0 {
++				// not matched
++				break
++			}
++		}
++		if i == len(itr.keys) {
++			// all keys matched
++			itr.currPrimKey = primKey
++			return &ledger.KV{Key: keyStr, Value: rowBytes}, nil
++		}
++	}
++
++	return nil, err
++}
++
++func (itr *MultiKeyRangeScanIterator) getKeyValueInternal(primKey *tb.Column) (string, []byte) {
++	keyString, err := buildKeyString(itr.tablename, []*tb.Column{primKey})
++	if err != nil {
++		return "", nil
++	}
++
++	logger.Debugf("MultiKey-Ite get from Key %s", keyString)
++	value, err := itr.s.GetState(itr.ns, keyString)
++	if err != nil {
++		return "", nil
++	}
++	return keyString, value
++}
++
++// Close - see interface 'statemgmt.RangeScanIterator' for details
++func (itr *MultiKeyRangeScanIterator) Close() {
++	itr.iter.Close()
++	itr.s = nil
++}
+diff --git a/core/ledger/ledger_interface.go b/core/ledger/ledger_interface.go
+index 2d8cac0..746f5e9 100644
+--- a/core/ledger/ledger_interface.go
++++ b/core/ledger/ledger_interface.go
+@@ -19,6 +19,7 @@ package ledger
+ import (
+ 	"github.com/hyperledger/fabric/protos/common"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // Ledger captures the methods that are common across the 'raw ledger' and the 'final ledger'
+@@ -117,6 +118,21 @@ type TxSimulator interface {
+ 	SetState(namespace string, key string, value []byte) error
+ 	// DeleteState deletes the given namespace and key
+ 	DeleteState(namespace string, key string) error
++	// CreateTable creates table in the given namespace
++	CreateTable(namespace string, tablename string, columnDefinitions []*tb.ColumnDefinition) error
++	// DeleteTable deletes table in the given namespace
++	DeleteTable(namespace string, tablename string) error
++	// InsertRow inserts one row to table in the given namespace
++	InsertRow(namespace string, tablename string, row *tb.Row) error
++	// DeleteRow deletes one row from table in the given namespace
++	DeleteRow(namespace string, tablename string, key []*tb.Column) error
++	// ReplaceRow replaces one row in table in the given namespace
++	ReplaceRow(namespace string, tablename string, row *tb.Row) error
++	// GetRow get the value for given namespace and some partial keys.  For a chaincode, the namespace corresponds to the chaincodeId
++	GetRow(namespace string, tablename string, key []*tb.Column) ([]byte, error)
++	// GetMultiKeyRangeScanIterator returns an iterator that contains all the key-values between given key ranges.
++	// The returned ResultsIterator contains results of type *KV
++	GetMultiKeyRangeScanIterator(namespace string, tablename string, key []*tb.Column) (ResultsIterator, error)
+ 	// SetMultipleKeys sets the values for multiple keys in a single call
+ 	SetStateMultipleKeys(namespace string, kvs map[string][]byte) error
+ 	// ExecuteUpdate for supporting rich data model (see comments on QueryExecutor above)
+diff --git a/examples/chaincode/go/multikey_table_example/multikey_table_defs.go b/examples/chaincode/go/multikey_table_example/multikey_table_defs.go
+new file mode 100644
+index 0000000..e22dca1
+--- /dev/null
++++ b/examples/chaincode/go/multikey_table_example/multikey_table_defs.go
+@@ -0,0 +1,66 @@
++/*
++Copyright Wanda Corp. 2016 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package main
++
++import (
++	tb "github.com/hyperledger/fabric/protos/table"
++	"github.com/hyperledger/fabric/core/chaincode/shim"
++)
++
++var userTablename = "UserTable"
++var userTableDefs = []*tb.ColumnDefinition{
++	{Name: "id", Type: tb.ColumnDefinition_UINT64, Key: true, AutoIncr: true},
++	{Name: "username", Type: tb.ColumnDefinition_STRING, Key: true},
++	{Name: "addr", Type: tb.ColumnDefinition_STRING},
++}
++
++var fundTablename = "FundTable"
++var fundTableDefs = []*tb.ColumnDefinition{
++	{Name: "id", Type: tb.ColumnDefinition_UINT64, Key: true, AutoIncr: true},
++	{Name: "fundname", Type: tb.ColumnDefinition_STRING, Key: true},
++	{Name: "info", Type: tb.ColumnDefinition_STRING},
++}
++
++var userHoldenTablename = "UserHoldeTable"
++var userHoldenTableDefs = []*tb.ColumnDefinition{
++	{Name: "id", Type: tb.ColumnDefinition_UINT64, Key: true, AutoIncr: true},
++	{Name: "userid", Type: tb.ColumnDefinition_UINT64, Key: true},
++	{Name: "productId", Type: tb.ColumnDefinition_UINT64, Key: true},
++	{Name: "amount", Type: tb.ColumnDefinition_UINT64},
++}
++
++func initTables(stub shim.ChaincodeStubInterface) error {
++	var tables = make(map[string][]*tb.ColumnDefinition)
++	tables[userTablename] = userTableDefs
++	tables[fundTablename] = fundTableDefs
++	tables[userHoldenTablename] = userHoldenTableDefs
++
++	for tablename, tableDef := range tables {
++		var table *tb.Table
++		var err error
++		if table, err = stub.GetTable(tablename); err != nil {
++			return err
++		}
++		if table == nil {
++			if err = stub.CreateTable(tablename, tableDef); err != nil {
++				return err
++			}
++		}
++	}
++
++	return nil
++}
+diff --git a/examples/chaincode/go/multikey_table_example/multikey_table_example.go b/examples/chaincode/go/multikey_table_example/multikey_table_example.go
+new file mode 100644
+index 0000000..2e26872
+--- /dev/null
++++ b/examples/chaincode/go/multikey_table_example/multikey_table_example.go
+@@ -0,0 +1,306 @@
++/*
++Copyright Wanda Corp. 2016 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package main
++
++import (
++	"fmt"
++
++	"encoding/json"
++	"errors"
++	"github.com/hyperledger/fabric/core/chaincode/shim"
++	tb "github.com/hyperledger/fabric/protos/table"
++	"strconv"
++)
++
++// SimpleChaincode example simple Chaincode implementation
++type SimpleChaincode struct {
++}
++
++type userHoldenInfo struct {
++	fundID   uint64
++	Fundname string `json:"fundname"`
++	Amount   uint64 `json:"amount"`
++}
++
++type fundHolderInfo struct {
++	userID   uint64
++	Username string `json:"username"`
++	Amount   uint64 `json:"amount"`
++}
++
++func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface) ([]byte, error) {
++	err := initTables(stub)
++	return nil, err
++}
++
++func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, error) {
++	function, args := stub.GetFunctionAndParameters()
++	if function == "AddUser" {
++		if len(args) < 2 {
++			return nil, fmt.Errorf("%s: invalid param.", function)
++		}
++
++		username := args[0]
++		useraddr := args[1]
++		_, err := stub.InsertRow(userTablename,
++			tb.Row{Columns: []*tb.Column{
++				{Value: &tb.Column_Uint64{Uint64: 0}},
++				{Value: &tb.Column_String_{String_: username}},
++				{Value: &tb.Column_String_{String_: useraddr}},
++			}})
++		return nil, err
++
++	} else if function == "AddFund" {
++		if len(args) < 2 {
++			return nil, fmt.Errorf("%s: invalid param.", function)
++		}
++
++		fundName := args[0]
++		fundInfo := args[1]
++		_, err := stub.InsertRow(fundTablename,
++			tb.Row{Columns: []*tb.Column{
++				{Value: &tb.Column_Uint64{Uint64: 0}},
++				{Value: &tb.Column_String_{String_: fundName}},
++				{Value: &tb.Column_String_{String_: fundInfo}},
++			}})
++		return nil, err
++
++	} else if function == "Buy" {
++		if len(args) < 3 {
++			return nil, fmt.Errorf("%s: invalid param.", function)
++		}
++
++		var userID, fundID, amount uint64
++		var err error
++		if userID, err = getUserID(stub, args[0]); err != nil {
++			return nil, fmt.Errorf("%s: invalid user(%s).", function, err.Error())
++		}
++		if fundID, err = getFundID(stub, args[1]); err != nil {
++			return nil, fmt.Errorf("%s: invalid fund(%s).", function, err.Error())
++		}
++		if amount, err = strconv.ParseUint(args[2], 10, 64); err != nil {
++			return nil, fmt.Errorf("%s: invalid amount(%s).", function, err.Error())
++		}
++		_, err = stub.InsertRow(userHoldenTablename,
++			tb.Row{Columns: []*tb.Column{
++				{Value: &tb.Column_Uint64{Uint64: 0}},
++				{Value: &tb.Column_Uint64{Uint64: userID}},
++				{Value: &tb.Column_Uint64{Uint64: fundID}},
++				{Value: &tb.Column_Uint64{Uint64: amount}},
++			}})
++		return nil, err
++	} else if function == "GetUserHolden" {
++		if len(args) < 1 {
++			return nil, fmt.Errorf("%s: invalid param.", function)
++		}
++		userID, err := getUserID(stub, args[0])
++		if err != nil {
++			return nil, fmt.Errorf("%s: invalid user(%s).", function, err.Error())
++		}
++
++		holdens, err := getUserHoldens(stub, userID)
++		if err != nil {
++			return nil, err
++		}
++		return json.Marshal(holdens)
++	} else if function == "GetFundHolders" {
++
++		if len(args) < 1 {
++			return nil, fmt.Errorf("%s: invalid param.", function)
++		}
++		userID, err := getUserID(stub, args[0])
++		if err != nil {
++			return nil, fmt.Errorf("%s: invalid user(%s).", function, err.Error())
++		}
++
++		holders, err := getFundHolders(stub, userID)
++		if err != nil {
++			return nil, err
++		}
++		return json.Marshal(holders)
++	}
++
++	return nil, fmt.Errorf("Invalid invoke function name %s", function)
++}
++
++func getUserID(stub shim.ChaincodeStubInterface, username string) (uint64, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_String_{String_: username}},
++	}
++
++	row, err := stub.GetRow(userTablename, queryCols)
++	if err != nil {
++		return 0, err
++	}
++	if len(row.Columns) == 0 {
++		return 0, errors.New("Not Found.")
++	}
++
++	return row.Columns[0].GetUint64(), nil
++}
++
++func getUserName(stub shim.ChaincodeStubInterface, userID uint64) (string, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Uint64{Uint64: userID}},
++	}
++
++	row, err := stub.GetRow(userTablename, queryCols)
++	if err != nil {
++		return "", err
++	}
++	if len(row.Columns) == 0 {
++		return "", errors.New("Not Found.")
++	}
++
++	return row.Columns[1].GetString_(), nil
++}
++
++func getFundID(stub shim.ChaincodeStubInterface, fundname string) (uint64, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_String_{String_: fundname}},
++	}
++
++	row, err := stub.GetRow(fundTablename, queryCols)
++	if err != nil {
++		return 0, err
++	}
++	if len(row.Columns) == 0 {
++		return 0, errors.New("Not Found.")
++	}
++
++	return row.Columns[0].GetUint64(), nil
++}
++
++func getFundName(stub shim.ChaincodeStubInterface, fundID uint64) (string, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Uint64{Uint64: fundID}},
++	}
++
++	row, err := stub.GetRow(fundTablename, queryCols)
++	if err != nil {
++		return "", err
++	}
++	if len(row.Columns) == 0 {
++		return "", errors.New("Not Found.")
++	}
++
++	return row.Columns[1].GetString_(), nil
++}
++
++func getUserHoldens(stub shim.ChaincodeStubInterface, userID uint64) ([]*userHoldenInfo, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_Uint64{Uint64: userID}},
++	}
++	rowChan, err := stub.GetRows(userHoldenTablename, queryCols)
++	if err != nil || rowChan == nil {
++		return nil, err
++	}
++	userHoldens := make([]*userHoldenInfo, 0)
++	fundNameMap := make(map[uint64]string)
++	for {
++		select {
++		case row, ok := <-rowChan:
++			if !ok {
++				rowChan = nil
++			} else {
++				h := &userHoldenInfo{
++					fundID: row.Columns[2].GetUint64(),
++					Amount: row.Columns[3].GetUint64(),
++				}
++				fundNameMap[h.fundID] = ""
++				userHoldens = append(userHoldens, h)
++			}
++		}
++		if rowChan == nil {
++			break
++		}
++	}
++
++	// query fund names
++	for fundID := range fundNameMap {
++		fundname, err := getFundName(stub, fundID)
++		if err != nil {
++			return nil, err
++		}
++		fundNameMap[fundID] = fundname
++	}
++
++	// update fund name
++	for _, h := range userHoldens {
++		h.Fundname = fundNameMap[h.fundID]
++	}
++
++	return userHoldens, nil
++}
++
++func getFundHolders(stub shim.ChaincodeStubInterface, fundID uint64) ([]*fundHolderInfo, error) {
++	queryCols := []tb.Column{
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_Bytes{Bytes: nil}},
++		{Value: &tb.Column_Uint64{Uint64: fundID}},
++	}
++	rowChan, err := stub.GetRows(userHoldenTablename, queryCols)
++	if err != nil || rowChan == nil {
++		return nil, err
++	}
++	fundHolders := make([]*fundHolderInfo, 0)
++	usernameMap := make(map[uint64]string)
++	for {
++		select {
++		case row, ok := <-rowChan:
++			if !ok {
++				rowChan = nil
++			} else {
++				h := &fundHolderInfo{
++					userID: row.Columns[2].GetUint64(),
++					Amount: row.Columns[3].GetUint64(),
++				}
++				usernameMap[h.userID] = ""
++				fundHolders = append(fundHolders, h)
++			}
++		}
++		if rowChan == nil {
++			break
++		}
++	}
++
++	// query user names
++	for userID := range usernameMap {
++		fundname, err := getUserName(stub, userID)
++		if err != nil {
++			return nil, err
++		}
++		usernameMap[userID] = fundname
++	}
++
++	// update user name
++	for _, h := range fundHolders {
++		h.Username = usernameMap[h.userID]
++	}
++
++	return fundHolders, nil
++}
++
++func main() {
++	err := shim.Start(new(SimpleChaincode))
++	if err != nil {
++		fmt.Printf("Error starting MultiKey-Table-Example chaincode: %s", err)
++	}
++}
+diff --git a/protos/peer/chaincode.pb.go b/protos/peer/chaincode.pb.go
+index fe8ac34..0a99414 100644
+--- a/protos/peer/chaincode.pb.go
++++ b/protos/peer/chaincode.pb.go
+@@ -169,23 +169,30 @@ func (ChaincodeDeploymentSpec_ExecutionEnvironment) EnumDescriptor() ([]byte, []
+ type ChaincodeMessage_Type int32
+ 
+ const (
+-	ChaincodeMessage_UNDEFINED               ChaincodeMessage_Type = 0
+-	ChaincodeMessage_REGISTER                ChaincodeMessage_Type = 1
+-	ChaincodeMessage_REGISTERED              ChaincodeMessage_Type = 2
+-	ChaincodeMessage_INIT                    ChaincodeMessage_Type = 3
+-	ChaincodeMessage_READY                   ChaincodeMessage_Type = 4
+-	ChaincodeMessage_TRANSACTION             ChaincodeMessage_Type = 5
+-	ChaincodeMessage_COMPLETED               ChaincodeMessage_Type = 6
+-	ChaincodeMessage_ERROR                   ChaincodeMessage_Type = 7
+-	ChaincodeMessage_GET_STATE               ChaincodeMessage_Type = 8
+-	ChaincodeMessage_PUT_STATE               ChaincodeMessage_Type = 9
+-	ChaincodeMessage_DEL_STATE               ChaincodeMessage_Type = 10
+-	ChaincodeMessage_INVOKE_CHAINCODE        ChaincodeMessage_Type = 11
+-	ChaincodeMessage_RESPONSE                ChaincodeMessage_Type = 13
+-	ChaincodeMessage_RANGE_QUERY_STATE       ChaincodeMessage_Type = 14
+-	ChaincodeMessage_RANGE_QUERY_STATE_NEXT  ChaincodeMessage_Type = 15
+-	ChaincodeMessage_RANGE_QUERY_STATE_CLOSE ChaincodeMessage_Type = 16
+-	ChaincodeMessage_KEEPALIVE               ChaincodeMessage_Type = 17
++	ChaincodeMessage_UNDEFINED                  ChaincodeMessage_Type = 0
++	ChaincodeMessage_REGISTER                   ChaincodeMessage_Type = 1
++	ChaincodeMessage_REGISTERED                 ChaincodeMessage_Type = 2
++	ChaincodeMessage_INIT                       ChaincodeMessage_Type = 3
++	ChaincodeMessage_READY                      ChaincodeMessage_Type = 4
++	ChaincodeMessage_TRANSACTION                ChaincodeMessage_Type = 5
++	ChaincodeMessage_COMPLETED                  ChaincodeMessage_Type = 6
++	ChaincodeMessage_ERROR                      ChaincodeMessage_Type = 7
++	ChaincodeMessage_GET_STATE                  ChaincodeMessage_Type = 8
++	ChaincodeMessage_PUT_STATE                  ChaincodeMessage_Type = 9
++	ChaincodeMessage_DEL_STATE                  ChaincodeMessage_Type = 10
++	ChaincodeMessage_INVOKE_CHAINCODE           ChaincodeMessage_Type = 11
++	ChaincodeMessage_RESPONSE                   ChaincodeMessage_Type = 13
++	ChaincodeMessage_RANGE_QUERY_STATE          ChaincodeMessage_Type = 14
++	ChaincodeMessage_RANGE_QUERY_STATE_NEXT     ChaincodeMessage_Type = 15
++	ChaincodeMessage_RANGE_QUERY_STATE_CLOSE    ChaincodeMessage_Type = 16
++	ChaincodeMessage_KEEPALIVE                  ChaincodeMessage_Type = 17
++	ChaincodeMessage_CREATE_TABLE               ChaincodeMessage_Type = 18
++	ChaincodeMessage_DELETE_TABLE               ChaincodeMessage_Type = 19
++	ChaincodeMessage_INSERT_ROW                 ChaincodeMessage_Type = 20
++	ChaincodeMessage_DELETE_ROW                 ChaincodeMessage_Type = 21
++	ChaincodeMessage_REPLACE_ROW                ChaincodeMessage_Type = 22
++	ChaincodeMessage_GET_ROW                    ChaincodeMessage_Type = 23
++	ChaincodeMessage_MULTIKEY_RANGE_QUERY_STATE ChaincodeMessage_Type = 24
+ )
+ 
+ var ChaincodeMessage_Type_name = map[int32]string{
+@@ -206,25 +213,39 @@ var ChaincodeMessage_Type_name = map[int32]string{
+ 	15: "RANGE_QUERY_STATE_NEXT",
+ 	16: "RANGE_QUERY_STATE_CLOSE",
+ 	17: "KEEPALIVE",
++	18: "CREATE_TABLE",
++	19: "DELETE_TABLE",
++	20: "INSERT_ROW",
++	21: "DELETE_ROW",
++	22: "REPLACE_ROW",
++	23: "GET_ROW",
++	24: "MULTIKEY_RANGE_QUERY_STATE",
+ }
+ var ChaincodeMessage_Type_value = map[string]int32{
+-	"UNDEFINED":               0,
+-	"REGISTER":                1,
+-	"REGISTERED":              2,
+-	"INIT":                    3,
+-	"READY":                   4,
+-	"TRANSACTION":             5,
+-	"COMPLETED":               6,
+-	"ERROR":                   7,
+-	"GET_STATE":               8,
+-	"PUT_STATE":               9,
+-	"DEL_STATE":               10,
+-	"INVOKE_CHAINCODE":        11,
+-	"RESPONSE":                13,
+-	"RANGE_QUERY_STATE":       14,
+-	"RANGE_QUERY_STATE_NEXT":  15,
+-	"RANGE_QUERY_STATE_CLOSE": 16,
+-	"KEEPALIVE":               17,
++	"UNDEFINED":                  0,
++	"REGISTER":                   1,
++	"REGISTERED":                 2,
++	"INIT":                       3,
++	"READY":                      4,
++	"TRANSACTION":                5,
++	"COMPLETED":                  6,
++	"ERROR":                      7,
++	"GET_STATE":                  8,
++	"PUT_STATE":                  9,
++	"DEL_STATE":                  10,
++	"INVOKE_CHAINCODE":           11,
++	"RESPONSE":                   13,
++	"RANGE_QUERY_STATE":          14,
++	"RANGE_QUERY_STATE_NEXT":     15,
++	"RANGE_QUERY_STATE_CLOSE":    16,
++	"KEEPALIVE":                  17,
++	"CREATE_TABLE":               18,
++	"DELETE_TABLE":               19,
++	"INSERT_ROW":                 20,
++	"DELETE_ROW":                 21,
++	"REPLACE_ROW":                22,
++	"GET_ROW":                    23,
++	"MULTIKEY_RANGE_QUERY_STATE": 24,
+ }
+ 
+ func (x ChaincodeMessage_Type) String() string {
+diff --git a/protos/peer/chaincode.proto b/protos/peer/chaincode.proto
+index 58191b7..09cbdbd 100644
+--- a/protos/peer/chaincode.proto
++++ b/protos/peer/chaincode.proto
+@@ -125,6 +125,13 @@ message ChaincodeMessage {
+         RANGE_QUERY_STATE_NEXT = 15;
+         RANGE_QUERY_STATE_CLOSE = 16;
+         KEEPALIVE = 17;
++        CREATE_TABLE = 18;
++        DELETE_TABLE = 19;
++        INSERT_ROW = 20;
++        DELETE_ROW = 21;
++        REPLACE_ROW = 22;
++        GET_ROW = 23;
++        MULTIKEY_RANGE_QUERY_STATE = 24;
+     }
+ 
+     Type type = 1;
+diff --git a/core/chaincode/shim/table.pb.go b/protos/table/table.pb.go
+similarity index 63%
+rename from core/chaincode/shim/table.pb.go
+rename to protos/table/table.pb.go
+index 3b55552..560c50b 100644
+--- a/core/chaincode/shim/table.pb.go
++++ b/protos/table/table.pb.go
+@@ -3,7 +3,7 @@
+ // DO NOT EDIT!
+ 
+ /*
+-Package shim is a generated protocol buffer package.
++Package table is a generated protocol buffer package.
+ 
+ It is generated from these files:
+ 	table.proto
+@@ -13,8 +13,10 @@ It has these top-level messages:
+ 	Table
+ 	Column
+ 	Row
++	RowInfo
++	MultiKeyRangeQueryState
+ */
+-package shim
++package table
+ 
+ import proto "github.com/golang/protobuf/proto"
+ import fmt "fmt"
+@@ -68,9 +70,10 @@ func (x ColumnDefinition_Type) String() string {
+ func (ColumnDefinition_Type) EnumDescriptor() ([]byte, []int) { return fileDescriptor0, []int{0, 0} }
+ 
+ type ColumnDefinition struct {
+-	Name string                `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+-	Type ColumnDefinition_Type `protobuf:"varint,2,opt,name=type,enum=shim.ColumnDefinition_Type" json:"type,omitempty"`
+-	Key  bool                  `protobuf:"varint,3,opt,name=key" json:"key,omitempty"`
++	Name     string                `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
++	Type     ColumnDefinition_Type `protobuf:"varint,2,opt,name=type,enum=table.ColumnDefinition_Type" json:"type,omitempty"`
++	Key      bool                  `protobuf:"varint,3,opt,name=key" json:"key,omitempty"`
++	AutoIncr bool                  `protobuf:"varint,4,opt,name=autoIncr" json:"autoIncr,omitempty"`
+ }
+ 
+ func (m *ColumnDefinition) Reset()                    { *m = ColumnDefinition{} }
+@@ -81,6 +84,8 @@ func (*ColumnDefinition) Descriptor() ([]byte, []int) { return fileDescriptor0,
+ type Table struct {
+ 	Name              string              `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+ 	ColumnDefinitions []*ColumnDefinition `protobuf:"bytes,2,rep,name=columnDefinitions" json:"columnDefinitions,omitempty"`
++	Version           uint64              `protobuf:"varint,3,opt,name=version" json:"version,omitempty"`
++	NextSeqNumber     uint64              `protobuf:"varint,4,opt,name=nextSeqNumber" json:"nextSeqNumber,omitempty"`
+ }
+ 
+ func (m *Table) Reset()                    { *m = Table{} }
+@@ -358,42 +363,85 @@ func (m *Row) GetColumns() []*Column {
+ 	return nil
+ }
+ 
++type RowInfo struct {
++	TableName string `protobuf:"bytes,1,opt,name=tableName" json:"tableName,omitempty"`
++	Row       *Row   `protobuf:"bytes,2,opt,name=row" json:"row,omitempty"`
++}
++
++func (m *RowInfo) Reset()                    { *m = RowInfo{} }
++func (m *RowInfo) String() string            { return proto.CompactTextString(m) }
++func (*RowInfo) ProtoMessage()               {}
++func (*RowInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
++
++func (m *RowInfo) GetRow() *Row {
++	if m != nil {
++		return m.Row
++	}
++	return nil
++}
++
++type MultiKeyRangeQueryState struct {
++	TableName string    `protobuf:"bytes,1,opt,name=tableName" json:"tableName,omitempty"`
++	Columns   []*Column `protobuf:"bytes,2,rep,name=columns" json:"columns,omitempty"`
++}
++
++func (m *MultiKeyRangeQueryState) Reset()                    { *m = MultiKeyRangeQueryState{} }
++func (m *MultiKeyRangeQueryState) String() string            { return proto.CompactTextString(m) }
++func (*MultiKeyRangeQueryState) ProtoMessage()               {}
++func (*MultiKeyRangeQueryState) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
++
++func (m *MultiKeyRangeQueryState) GetColumns() []*Column {
++	if m != nil {
++		return m.Columns
++	}
++	return nil
++}
++
+ func init() {
+-	proto.RegisterType((*ColumnDefinition)(nil), "shim.ColumnDefinition")
+-	proto.RegisterType((*Table)(nil), "shim.Table")
+-	proto.RegisterType((*Column)(nil), "shim.Column")
+-	proto.RegisterType((*Row)(nil), "shim.Row")
+-	proto.RegisterEnum("shim.ColumnDefinition_Type", ColumnDefinition_Type_name, ColumnDefinition_Type_value)
++	proto.RegisterType((*ColumnDefinition)(nil), "table.ColumnDefinition")
++	proto.RegisterType((*Table)(nil), "table.Table")
++	proto.RegisterType((*Column)(nil), "table.Column")
++	proto.RegisterType((*Row)(nil), "table.Row")
++	proto.RegisterType((*RowInfo)(nil), "table.RowInfo")
++	proto.RegisterType((*MultiKeyRangeQueryState)(nil), "table.MultiKeyRangeQueryState")
++	proto.RegisterEnum("table.ColumnDefinition_Type", ColumnDefinition_Type_name, ColumnDefinition_Type_value)
+ }
+ 
+ func init() { proto.RegisterFile("table.proto", fileDescriptor0) }
+ 
+ var fileDescriptor0 = []byte{
+-	// 413 bytes of a gzipped FileDescriptorProto
+-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x6c, 0x52, 0xd1, 0x6a, 0xdb, 0x30,
+-	0x14, 0x8d, 0x62, 0xd9, 0x69, 0x6f, 0xbb, 0xa1, 0x89, 0x11, 0x04, 0x7b, 0x31, 0x7e, 0x18, 0x7e,
+-	0x99, 0xcd, 0x12, 0xe3, 0x0f, 0xf0, 0x3a, 0x96, 0xc2, 0x68, 0x87, 0xea, 0x32, 0xb6, 0x37, 0xdb,
+-	0x55, 0x13, 0x31, 0xc7, 0x0a, 0xb6, 0xb2, 0xe1, 0x8f, 0x1b, 0xec, 0xd3, 0x86, 0xa4, 0x04, 0x4a,
+-	0x9b, 0xb7, 0x7b, 0xee, 0x3d, 0xe7, 0xe8, 0xde, 0x83, 0xe0, 0x42, 0x57, 0x75, 0x2b, 0x92, 0x5d,
+-	0xaf, 0xb4, 0xa2, 0x78, 0xd8, 0xc8, 0x6d, 0xf4, 0x0f, 0x01, 0xf9, 0xa4, 0xda, 0xfd, 0xb6, 0xbb,
+-	0x12, 0x8f, 0xb2, 0x93, 0x5a, 0xaa, 0x8e, 0x52, 0xc0, 0x5d, 0xb5, 0x15, 0x0c, 0x85, 0x28, 0x3e,
+-	0xe7, 0xb6, 0xa6, 0x29, 0x60, 0x3d, 0xee, 0x04, 0x9b, 0x86, 0x28, 0x7e, 0xbd, 0x78, 0x97, 0x18,
+-	0x75, 0xf2, 0x5c, 0x99, 0x94, 0xe3, 0x4e, 0x70, 0x4b, 0xa4, 0x04, 0xbc, 0x5f, 0x62, 0x64, 0x5e,
+-	0x88, 0xe2, 0x33, 0x6e, 0xca, 0xe8, 0x1e, 0xb0, 0x99, 0x53, 0x80, 0xe0, 0xae, 0xe4, 0xd7, 0x37,
+-	0x5f, 0xc8, 0x84, 0x9e, 0x83, 0x7f, 0x7d, 0x53, 0x2e, 0x17, 0x04, 0x1d, 0xca, 0x3c, 0x23, 0x53,
+-	0xc3, 0xb8, 0x77, 0x6d, 0xef, 0x58, 0xe7, 0x19, 0xc1, 0x86, 0x52, 0xfc, 0x28, 0x3f, 0xdf, 0x11,
+-	0x9f, 0x9e, 0x01, 0x2e, 0x6e, 0x6f, 0xbf, 0x92, 0x20, 0xaa, 0xc0, 0x2f, 0xcd, 0x5d, 0x27, 0xd7,
+-	0xbe, 0x82, 0x37, 0xcd, 0xb3, 0x25, 0x07, 0x36, 0x0d, 0xbd, 0xf8, 0x62, 0x31, 0x3f, 0x7d, 0x03,
+-	0x7f, 0x29, 0x88, 0xfe, 0x22, 0x08, 0x1c, 0x8f, 0x32, 0x08, 0x06, 0xdd, 0xcb, 0x6e, 0xed, 0x9e,
+-	0x59, 0x4d, 0xf8, 0x01, 0xd3, 0x39, 0xf8, 0xb2, 0xd3, 0xcb, 0x85, 0x8d, 0xc8, 0x5f, 0x4d, 0xb8,
+-	0x83, 0x87, 0x7e, 0x9e, 0xd9, 0x28, 0xbc, 0x43, 0x3f, 0xcf, 0x8c, 0xd3, 0xde, 0x09, 0x70, 0x88,
+-	0xe2, 0x57, 0xc6, 0xc9, 0xe1, 0xe3, 0x24, 0xcf, 0x98, 0x1f, 0xa2, 0x18, 0x1f, 0x27, 0x79, 0x66,
+-	0xbc, 0xea, 0x51, 0x8b, 0x81, 0x05, 0x21, 0x8a, 0x2f, 0x8d, 0x97, 0x85, 0xf4, 0x2d, 0xe0, 0x5a,
+-	0xa9, 0x96, 0xcd, 0x4c, 0xda, 0xab, 0x09, 0xb7, 0xa8, 0x98, 0x81, 0xff, 0xbb, 0x6a, 0xf7, 0x22,
+-	0xfa, 0x00, 0x1e, 0x57, 0x7f, 0xe8, 0x7b, 0x98, 0xb9, 0xdb, 0x06, 0x86, 0x6c, 0x04, 0x97, 0x4f,
+-	0x23, 0xe0, 0xc7, 0x61, 0xf1, 0x1d, 0xe6, 0xaa, 0x5f, 0x27, 0x9b, 0x71, 0x27, 0xfa, 0x56, 0x3c,
+-	0xac, 0x45, 0xef, 0xfe, 0xcc, 0x50, 0x80, 0x4d, 0xfa, 0x9b, 0x01, 0x3f, 0x3f, 0xae, 0xa5, 0xde,
+-	0xec, 0xeb, 0xa4, 0x51, 0xdb, 0xf4, 0x09, 0x35, 0x7d, 0xac, 0xea, 0x5e, 0x36, 0x69, 0xa3, 0x7a,
+-	0x91, 0x36, 0x9b, 0x4a, 0x76, 0x8d, 0x7a, 0x10, 0xa9, 0x79, 0xa8, 0x0e, 0xac, 0xcd, 0xf2, 0x7f,
+-	0x00, 0x00, 0x00, 0xff, 0xff, 0x35, 0x1b, 0xaf, 0x40, 0x89, 0x02, 0x00, 0x00,
++	// 515 bytes of a gzipped FileDescriptorProto
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x84, 0x53, 0xdd, 0x8e, 0xd2, 0x40,
++	0x14, 0xa6, 0xf4, 0x07, 0x38, 0x88, 0xa9, 0x13, 0xb3, 0x3b, 0x31, 0x5c, 0x90, 0xc6, 0x44, 0xe2,
++	0x45, 0x31, 0xd0, 0xf4, 0x01, 0x50, 0x22, 0x44, 0x65, 0xd7, 0x81, 0xbd, 0xd0, 0x2b, 0x5b, 0x1c,
++	0xd8, 0xc6, 0x32, 0x83, 0xd3, 0xe9, 0x62, 0x5f, 0xc7, 0xf7, 0xf0, 0x51, 0x7c, 0x17, 0x33, 0x33,
++	0xe0, 0xfe, 0xf8, 0xb3, 0x77, 0xe7, 0xfb, 0xe6, 0x9c, 0xef, 0x9c, 0xef, 0x9c, 0x16, 0xda, 0x32,
++	0x49, 0x73, 0x1a, 0xee, 0x04, 0x97, 0x1c, 0xb9, 0x1a, 0x04, 0x3f, 0x2d, 0xf0, 0x5f, 0xf2, 0xbc,
++	0xdc, 0xb2, 0x57, 0x74, 0x9d, 0xb1, 0x4c, 0x66, 0x9c, 0x21, 0x04, 0x0e, 0x4b, 0xb6, 0x14, 0x5b,
++	0x3d, 0xab, 0xdf, 0x22, 0x3a, 0x46, 0x2f, 0xc0, 0x91, 0xd5, 0x8e, 0xe2, 0x7a, 0xcf, 0xea, 0x3f,
++	0x1c, 0x76, 0x43, 0xa3, 0x75, 0xb7, 0x34, 0x5c, 0x56, 0x3b, 0x4a, 0x74, 0x26, 0xf2, 0xc1, 0xfe,
++	0x42, 0x2b, 0x6c, 0xf7, 0xac, 0x7e, 0x93, 0xa8, 0x10, 0x3d, 0x81, 0x66, 0x52, 0x4a, 0x3e, 0x63,
++	0x2b, 0x81, 0x1d, 0x4d, 0xff, 0xc6, 0xc1, 0x05, 0x38, 0xaa, 0x16, 0x01, 0x78, 0x8b, 0x25, 0x99,
++	0xcd, 0x5f, 0xfb, 0x35, 0xd4, 0x02, 0x77, 0x36, 0x5f, 0x8e, 0x86, 0xbe, 0x75, 0x08, 0xe3, 0xc8,
++	0xaf, 0xab, 0x8c, 0x0b, 0x43, 0xdb, 0xc7, 0x38, 0x8e, 0x7c, 0x47, 0xa5, 0x8c, 0x3f, 0x2c, 0x27,
++	0x0b, 0xdf, 0x45, 0x4d, 0x70, 0xc6, 0x67, 0x67, 0x6f, 0x7d, 0x2f, 0xf8, 0x6e, 0x81, 0xbb, 0x54,
++	0xa3, 0xfe, 0xd5, 0xd4, 0x04, 0x1e, 0xad, 0xee, 0x38, 0x28, 0x70, 0xbd, 0x67, 0xf7, 0xdb, 0xc3,
++	0xd3, 0x7f, 0x38, 0x24, 0x7f, 0x56, 0x20, 0x0c, 0x8d, 0x2b, 0x2a, 0x8a, 0x8c, 0x33, 0xed, 0xd6,
++	0x21, 0x47, 0x88, 0x9e, 0x42, 0x87, 0xd1, 0x6f, 0x72, 0x41, 0xbf, 0xce, 0xcb, 0x6d, 0x4a, 0x8d,
++	0x6d, 0x87, 0xdc, 0x26, 0x83, 0x1f, 0x16, 0x78, 0xa6, 0x0f, 0xc2, 0xe0, 0x15, 0x52, 0x64, 0x6c,
++	0x63, 0xe6, 0x9c, 0xd6, 0xc8, 0x01, 0xa3, 0x13, 0x70, 0x33, 0x26, 0x47, 0x43, 0x7d, 0x01, 0x77,
++	0x5a, 0x23, 0x06, 0x1e, 0xf8, 0x38, 0xd2, 0xad, 0xed, 0x03, 0x1f, 0x47, 0x4a, 0xa9, 0x34, 0x05,
++	0xaa, 0x67, 0x47, 0x29, 0x19, 0x7c, 0x7c, 0x89, 0x23, 0xec, 0xaa, 0x69, 0x8e, 0x2f, 0x71, 0xa4,
++	0xb4, 0xd2, 0x4a, 0xd2, 0x02, 0x7b, 0x3d, 0xab, 0xff, 0x40, 0x69, 0x69, 0x88, 0x1e, 0x83, 0x93,
++	0x72, 0x9e, 0xe3, 0x86, 0x3a, 0xda, 0xb4, 0x46, 0x34, 0x1a, 0x37, 0xc0, 0xbd, 0x4a, 0xf2, 0x92,
++	0x06, 0x21, 0xd8, 0x84, 0xef, 0xd1, 0x33, 0x68, 0x98, 0xdd, 0x14, 0xd8, 0xd2, 0x3b, 0xec, 0xdc,
++	0xda, 0x21, 0x39, 0xbe, 0x06, 0x13, 0x68, 0x10, 0xbe, 0x9f, 0xb1, 0x35, 0x47, 0x5d, 0x68, 0xe9,
++	0x9c, 0xf9, 0xf5, 0x69, 0xae, 0x09, 0xd4, 0x05, 0x5b, 0xf0, 0xbd, 0x76, 0xdc, 0x1e, 0xc2, 0x41,
++	0x8d, 0xf0, 0x3d, 0x51, 0x74, 0xf0, 0x09, 0x4e, 0xdf, 0x95, 0xb9, 0xcc, 0xde, 0xd0, 0x8a, 0x24,
++	0x6c, 0x43, 0xdf, 0x97, 0x54, 0x54, 0x0b, 0x99, 0x48, 0x7a, 0x8f, 0xec, 0x8d, 0x41, 0xeb, 0xff,
++	0x1b, 0x74, 0x7c, 0x0e, 0x27, 0x5c, 0x6c, 0xc2, 0xcb, 0x6a, 0x47, 0x45, 0x4e, 0x3f, 0x6f, 0xa8,
++	0x30, 0x7f, 0x4f, 0x31, 0x06, 0xfd, 0x51, 0x9d, 0x2b, 0xf0, 0xf1, 0xf9, 0x26, 0x93, 0x97, 0x65,
++	0x1a, 0xae, 0xf8, 0x76, 0x70, 0x23, 0x75, 0xb0, 0x4e, 0x52, 0x91, 0xad, 0x06, 0xa6, 0x62, 0xa0,
++	0x3b, 0xa4, 0x9e, 0x46, 0xa3, 0x5f, 0x01, 0x00, 0x00, 0xff, 0xff, 0xf6, 0x17, 0x0a, 0x1a, 0x8c,
++	0x03, 0x00, 0x00,
+ }
+diff --git a/core/chaincode/shim/table.proto b/protos/table/table.proto
+similarity index 74%
+rename from core/chaincode/shim/table.proto
+rename to protos/table/table.proto
+index 056c890..958775a 100644
+--- a/core/chaincode/shim/table.proto
++++ b/protos/table/table.proto
+@@ -16,35 +16,38 @@ limitations under the License.
+ 
+ syntax = "proto3";
+ 
+-option go_package = "github.com/hyperledger/fabric/core/chaincode/shim" ;
++option go_package = "github.com/hyperledger/fabric/protos/table" ;
+ 
+-package shim;
++package table;
+ option java_package = "org.hyperledger.protos";
+ option java_outer_classname = "TableProto";
+ message ColumnDefinition {
+ 	string name = 1;
+ 	enum Type {
+-    STRING = 0;
++        STRING = 0;
+ 		INT32 = 1;
+ 		INT64 = 2;
+ 		UINT32 = 3;
+ 		UINT64 = 4;
+ 		BYTES = 5;
+ 		BOOL = 6;
+-  }
++    }
+ 	Type type = 2;
+ 	bool key = 3;
++	bool autoIncr = 4;
+ }
+ 
+ message Table {
+     string name = 1;
+     repeated ColumnDefinition columnDefinitions = 2;
++    uint64 version = 3;
++    uint64 nextSeqNumber = 4;
+ }
+ 
+ message Column {
+ 	oneof value {
+-    string string = 1;
+-    int32 int32 = 2;
++        string string = 1;
++        int32 int32 = 2;
+ 		int64 int64 = 3;
+ 		uint32 uint32 = 4;
+ 		uint64 uint64 = 5;
+@@ -56,3 +59,13 @@ message Column {
+ message Row {
+ 	repeated Column columns = 1;
+ }
++
++message RowInfo {
++	string tableName = 1;
++	Row row = 2;
++}
++
++message MultiKeyRangeQueryState {
++	string tableName = 1;
++	repeated Column columns = 2;
++}

@@ -1,0 +1,102 @@
+diff --git a/examples/chaincode/go/tianjs/tianjs.go b/examples/chaincode/go/tianjs/tianjs.go
+index a5f5839..75a4833 100644
+--- a/examples/chaincode/go/tianjs/tianjs.go
++++ b/examples/chaincode/go/tianjs/tianjs.go
+@@ -7,7 +7,7 @@ import (
+ 	"github.com/spf13/viper"
+ 	"os"
+ 	"path/filepath"
+-	"github.com/hyperledger/fabric/core/crypto"
++	"github.com/hyperledger/fabric/core/crypto/primitives"
+ )
+ 
+ var productMgr = NewProductMgr()
+@@ -37,7 +37,7 @@ func (t *TianJsChaincode) Init(stub shim.ChaincodeStubInterface, function string
+ 	}
+ 
+ 	// Init the crypto layer
+-	if err := crypto.Init(); err != nil {
++	if err := primitives.InitSecurityLevel("SHA3", 256); err != nil {
+ 		return nil, err
+ 	}
+ 
+@@ -194,15 +194,7 @@ func (t *TianJsChaincode) Invoke(stub shim.ChaincodeStubInterface, function stri
+ 			return nil, errors.New("Invalid param for maturing one product")
+ 		}
+ 		return nil, productMgr.Settle(stub, args)
+-	}
+-
+-	return nil, errors.New("Unsupported invocation: " + function)
+-}
+-
+-// Query callback representing the query of a chaincode
+-func (t *TianJsChaincode) Query(stub shim.ChaincodeStubInterface, function string, args []string) ([]byte, error) {
+-
+-	if function == "GetAccountInfo" {
++	} else if function == "GetAccountInfo" {
+ 		if len(args) != 1 {
+ 			return nil, errors.New("Invalid param for User account query")
+ 		}
+@@ -333,7 +325,7 @@ func (t *TianJsChaincode) Query(stub shim.ChaincodeStubInterface, function strin
+ 		return productMgr.GetAccountFundHolden(stub, args)
+ 	}
+ 
+-	return nil, errors.New("Unsupported query: " + function)
++	return nil, errors.New("Unsupported invoke: " + function)
+ }
+ 
+ func main() {
+diff --git a/examples/chaincode/go/tianjs/util.go b/examples/chaincode/go/tianjs/util.go
+index 5318700..2caae17 100644
+--- a/examples/chaincode/go/tianjs/util.go
++++ b/examples/chaincode/go/tianjs/util.go
+@@ -48,27 +48,29 @@ func getNextTransDay(ts uint64, cutTime uint64) uint64 {
+ }
+ 
+ func verifySignature(stub shim.ChaincodeStubInterface, userPubKey string) (bool, error) {
+-	var bindingBytes, ctorBytes, signature, userPubKeyBytes []byte
+-	var err error
+-	if ctorBytes, err = stub.GetPayload(); err != nil {
+-		return false, err
+-	}
+-	if bindingBytes, err = stub.GetBinding(); err != nil {
+-		return false, err
+-	}
+-	ctorBytes = append(ctorBytes, bindingBytes...)
++	return true, nil
+ 
+-	if signature, err = stub.GetCallerMetadata(); err != nil {
+-		return false, err
+-	}
+-	if userPubKeyBytes, err = base64.StdEncoding.DecodeString(userPubKey); err != nil {
+-		return false, err
+-	}
+-	cert, err := primitives.DERToX509Certificate(userPubKeyBytes)
+-	if err != nil {
+-		return false, err
+-	}
+-	return primitives.ECDSAVerify(cert.PublicKey, ctorBytes, signature)
++	//var bindingBytes, ctorBytes, signature, userPubKeyBytes []byte
++	//var err error
++	//if ctorBytes, err = stub.GetPayload(); err != nil {
++	//	return false, err
++	//}
++	//if bindingBytes, err = stub.GetBinding(); err != nil {
++	//	return false, err
++	//}
++	//ctorBytes = append(ctorBytes, bindingBytes...)
++	//
++	//if signature, err = stub.GetCallerMetadata(); err != nil {
++	//	return false, err
++	//}
++	//if userPubKeyBytes, err = base64.StdEncoding.DecodeString(userPubKey); err != nil {
++	//	return false, err
++	//}
++	//cert, err := primitives.DERToX509Certificate(userPubKeyBytes)
++	//if err != nil {
++	//	return false, err
++	//}
++	//return primitives.ECDSAVerify(cert.PublicKey, ctorBytes, signature)
+ }
+ 
+ func verifyDateFormat(date string) bool {

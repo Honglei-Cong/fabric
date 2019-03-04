@@ -1,0 +1,31 @@
+diff --git a/gossip/gossip/gossip_impl.go b/gossip/gossip/gossip_impl.go
+index 6c77fa8..8c214d9 100644
+--- a/gossip/gossip/gossip_impl.go
++++ b/gossip/gossip/gossip_impl.go
+@@ -36,6 +36,7 @@ import (
+ 	"github.com/hyperledger/fabric/gossip/util"
+ 	"github.com/hyperledger/fabric/protos/gossip"
+ 	"github.com/op/go-logging"
++	"github.com/spf13/viper"
+ 	"google.golang.org/grpc"
+ )
+ 
+@@ -165,13 +166,17 @@ func (g *gossipServiceImpl) JoinChan(joinMsg api.JoinChannelMessage, chainID com
+ 		if ap.Port == 0 {
+ 			g.logger.Warning("Got invalid port (0), skipping connecting to anchor peer", ap)
+ 		}
++		endpoint := fmt.Sprintf("%s:%d", ap.Host, ap.Port)
+ 		pkiID := g.mcs.GetPKIidOfCert(ap.Cert)
++		if viper.GetBool("peer.gossip.ignoresecurity") {
++			pkiID = []byte(endpoint)
++		}
++
+ 		// Skip connecting to self
+ 		if bytes.Equal([]byte(pkiID), []byte(selfPkiID)) {
+ 			g.logger.Info("Anchor peer with same PKI-ID, skipping connecting to myself")
+ 			continue
+ 		}
+-		endpoint := fmt.Sprintf("%s:%d", ap.Host, ap.Port)
+ 		g.disc.Connect(discovery.NetworkMember{Endpoint: endpoint, PKIid: pkiID})
+ 	}
+ }

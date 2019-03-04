@@ -1,0 +1,189 @@
+diff --git a/gossip/comm/comm_impl.go b/gossip/comm/comm_impl.go
+index c397df2..71fdf46 100644
+--- a/gossip/comm/comm_impl.go
++++ b/gossip/comm/comm_impl.go
+@@ -187,7 +187,7 @@ func (c *commImpl) createConnection(endpoint string, expectedPKIID common.PKIidT
+ 		if err == nil {
+ 			if expectedPKIID != nil && !bytes.Equal(pkiID, expectedPKIID) {
+ 				// PKIID is nil when we don't know the remote PKI id's
+-				c.logger.Warning("Remote endpoint claims to be a different peer, expected", expectedPKIID, "but got", pkiID)
++				c.logger.Warning("Remote endpoint claims to be a different peer, expected", string(expectedPKIID), "but got", string(pkiID))
+ 				return nil, fmt.Errorf("Authentication failure")
+ 			}
+ 			conn := newConnection(cl, cc, stream, nil)
+@@ -215,9 +215,9 @@ func (c *commImpl) Send(msg *proto.GossipMessage, peers ...*RemotePeer) {
+ 		return
+ 	}
+ 
+-	c.logger.Info("Entering, sending", msg, "to ", len(peers), "peers")
+-
+ 	for _, peer := range peers {
++		c.logger.Info("Entering, sending", msg, "to ", string(peer.PKIID), "peers")
++
+ 		go func(peer *RemotePeer, msg *proto.GossipMessage) {
+ 			c.sendToEndpoint(peer, msg)
+ 		}(peer, msg)
+@@ -405,7 +405,7 @@ func (c *commImpl) authenticateRemotePeer(stream stream) (common.PKIidType, erro
+ 
+ 	cMsg = c.createConnectionMsg(c.PKIID, c.selfCertHash, c.peerIdentity, signer)
+ 
+-	c.logger.Debug("Sending", cMsg, "to", remoteAddress)
++	c.logger.Warning("Sending", cMsg, "to", remoteAddress)
+ 	stream.Send(cMsg)
+ 	m := readWithTimeout(stream, defConnTimeout)
+ 	if m == nil {
+@@ -427,7 +427,7 @@ func (c *commImpl) authenticateRemotePeer(stream stream) (common.PKIidType, erro
+ 		c.logger.Warning("Connection attempt from", remoteAddress, "but it is black-listed")
+ 		return nil, fmt.Errorf("Black-listed")
+ 	}
+-	c.logger.Debug("Received", receivedMsg, "from", remoteAddress)
++	c.logger.Warning("Received", receivedMsg, "from", remoteAddress)
+ 	err = c.idMapper.Put(receivedMsg.PkiID, receivedMsg.Cert)
+ 	if err != nil {
+ 		c.logger.Warning("Identity store rejected", remoteAddress, ":", err)
+diff --git a/gossip/discovery/discovery_impl.go b/gossip/discovery/discovery_impl.go
+index 9e42951..e530da0 100644
+--- a/gossip/discovery/discovery_impl.go
++++ b/gossip/discovery/discovery_impl.go
+@@ -27,6 +27,7 @@ import (
+ 	"github.com/hyperledger/fabric/gossip/util"
+ 	"github.com/hyperledger/fabric/protos/gossip"
+ 	"github.com/op/go-logging"
++	"runtime/debug"
+ )
+ 
+ const defaultHelloInterval = time.Duration(5) * time.Second
+@@ -132,7 +133,8 @@ func NewDiscoveryService(bootstrapPeers []string, self NetworkMember, comm CommS
+ }
+ 
+ func (d *gossipDiscoveryImpl) Connect(member NetworkMember) {
+-	d.logger.Debug("Entering", member)
++	d.logger.Warning(" >>>>>> Entering", member)
++	d.logger.Warning(string(debug.Stack()))
+ 	defer d.logger.Debug("Exiting")
+ 
+ 	if member.PKIid == nil {
+@@ -305,7 +307,7 @@ func (d *gossipDiscoveryImpl) sendMemResponse(member *proto.Member, known [][]by
+ 
+ 	memResp := d.createMembershipResponse(known)
+ 
+-	defer d.logger.Debug("Exiting, replying with", memResp)
++	defer d.logger.Warning(">>>>> Exiting, replying with", memResp)
+ 
+ 	d.comm.SendToPeer(&NetworkMember{
+ 		Endpoint: member.Endpoint,
+@@ -342,6 +344,8 @@ func (d *gossipDiscoveryImpl) createMembershipResponse(known [][]byte) *proto.Me
+ 		}
+ 	}
+ 
++	d.logger.Warning(" create Member Response >>>>>>", string(aliveMsg.GetAliveMsg().Membership.PkiID))
++
+ 	return &proto.MembershipResponse{
+ 		Alive: append(d.cachedMembership.Alive, aliveMsg),
+ 		Dead:  deadPeers,
+@@ -365,6 +369,8 @@ func (d *gossipDiscoveryImpl) handleAliveMessage(m *proto.GossipMessage) {
+ 
+ 	ts := m.GetAliveMsg().Timestamp
+ 
++	d.logger.Warning(">>>>>>", m.GetAliveMsg().Membership.Endpoint, string(pkiID))
++
+ 	d.lock.RLock()
+ 	_, known := d.id2Member[string(pkiID)]
+ 	d.lock.RUnlock()
+@@ -415,7 +421,7 @@ func (d *gossipDiscoveryImpl) handleAliveMessage(m *proto.GossipMessage) {
+ }
+ 
+ func (d *gossipDiscoveryImpl) resurrectMember(am *proto.GossipMessage, t proto.PeerTime) {
+-	d.logger.Info("Entering, AliveMessage:", am, "t:", t)
++	d.logger.Warning(">>>>>> Entering, AliveMessage:", am, "t:", t)
+ 	defer d.logger.Info("Exiting")
+ 	d.lock.Lock()
+ 	defer d.lock.Unlock()
+@@ -668,10 +674,10 @@ func (d *gossipDiscoveryImpl) learnExistingMembers(aliveArr []*proto.GossipMessa
+ 
+ 			i := util.IndexInSlice(d.cachedMembership.Alive, m, samePKIidAliveMessage)
+ 			if i == -1 {
+-				d.logger.Debug("Appended", am, "to d.cachedMembership.Alive")
++				d.logger.Warning(">>>> Appended", am, "to d.cachedMembership.Alive", string(am.Membership.PkiID))
+ 				d.cachedMembership.Alive = append(d.cachedMembership.Alive, m)
+ 			} else {
+-				d.logger.Debug("Replaced", am, "in d.cachedMembership.Alive")
++				d.logger.Warning(">>>> Replaced", am, "in d.cachedMembership.Alive", string(am.Membership.PkiID))
+ 				d.cachedMembership.Alive[i] = m
+ 			}
+ 		}
+@@ -696,7 +702,7 @@ func (d *gossipDiscoveryImpl) learnNewMembers(aliveMembers []*proto.GossipMessag
+ 		}
+ 
+ 		d.cachedMembership.Alive = append(d.cachedMembership.Alive, am)
+-		d.logger.Infof("Learned about a new alive member: %v", am)
++		d.logger.Warningf(">>>> Learned about a new alive member: %v, %s", am, string(am.GetAliveMsg().Membership.PkiID))
+ 	}
+ 
+ 	for _, dm := range deadMembers {
+@@ -721,6 +727,8 @@ func (d *gossipDiscoveryImpl) learnNewMembers(aliveMembers []*proto.GossipMessag
+ 				d.logger.Warning("Expected alive message, got instead:", m)
+ 				return
+ 			}
++			d.logger.Warningf(">>>> update member: %v, %s", a, string(m.GetAliveMsg().Membership.PkiID))
++
+ 			d.id2Member[string(member.Membership.PkiID)] = &NetworkMember{
+ 				Endpoint: member.Membership.Endpoint,
+ 				Metadata: member.Membership.Metadata,
+diff --git a/gossip/gossip/gossip_impl.go b/gossip/gossip/gossip_impl.go
+index 6c77fa8..7fc6125 100644
+--- a/gossip/gossip/gossip_impl.go
++++ b/gossip/gossip/gossip_impl.go
+@@ -37,6 +37,7 @@ import (
+ 	"github.com/hyperledger/fabric/protos/gossip"
+ 	"github.com/op/go-logging"
+ 	"google.golang.org/grpc"
++	"github.com/spf13/viper"
+ )
+ 
+ const (
+@@ -84,6 +85,8 @@ func NewGossipService(conf *Config, s *grpc.Server, secAdvisor api.SecurityAdvis
+ 		c, err = createCommWithoutServer(s, conf.TLSServerCert, idMapper, selfIdentity, dialOpts...)
+ 	}
+ 
++	lgr.Warning(">>>>NewGossipService ", string(selfIdentity))
++
+ 	if err != nil {
+ 		lgr.Error("Failed instntiating communication layer:", err)
+ 		return nil
+@@ -165,13 +168,19 @@ func (g *gossipServiceImpl) JoinChan(joinMsg api.JoinChannelMessage, chainID com
+ 		if ap.Port == 0 {
+ 			g.logger.Warning("Got invalid port (0), skipping connecting to anchor peer", ap)
+ 		}
++		endpoint := fmt.Sprintf("%s:%d", ap.Host, ap.Port)
+ 		pkiID := g.mcs.GetPKIidOfCert(ap.Cert)
++		if viper.GetBool("peer.gossip.ignoresecurity") {
++			pkiID = []byte(endpoint)
++		}
++
++		g.logger.Warning(">>>>> JoinChan", endpoint)
++
+ 		// Skip connecting to self
+ 		if bytes.Equal([]byte(pkiID), []byte(selfPkiID)) {
+ 			g.logger.Info("Anchor peer with same PKI-ID, skipping connecting to myself")
+ 			continue
+ 		}
+-		endpoint := fmt.Sprintf("%s:%d", ap.Host, ap.Port)
+ 		g.disc.Connect(discovery.NetworkMember{Endpoint: endpoint, PKIid: pkiID})
+ 	}
+ }
+@@ -469,8 +478,14 @@ func (g *gossipServiceImpl) gossipInChan(messages []*proto.GossipMessage, chanRo
+ 		// Send the messages to the remote peers
+ 		for _, msg := range messagesOfChannel {
+ 			if msg.IsLeadershipMsg() {
++				if len(peers2Send) > 0 {
++					g.logger.Warning("LeadershipMsg >>>>> ", allPeersInCh[0])
++				}
+ 				g.comm.Send(msg, allPeersInCh...)
+ 			} else {
++				if len(peers2Send) > 0 {
++					g.logger.Warning(">>>>> ", peers2Send[0])
++				}
+ 				g.comm.Send(msg, peers2Send...)
+ 			}
+ 		}

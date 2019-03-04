@@ -1,0 +1,1409 @@
+diff --git a/bddtests/chaincode/go/table/table.go b/bddtests/chaincode/go/table/table.go
+index 1de608b..f850dbf 100644
+--- a/bddtests/chaincode/go/table/table.go
++++ b/bddtests/chaincode/go/table/table.go
+@@ -23,6 +23,7 @@ import (
+ 	"strconv"
+ 
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // SimpleChaincode example simple Chaincode implementation
+@@ -81,15 +82,15 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 		}
+ 		col3Val := int32(col3Int)
+ 
+-		var columns []*shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
+-		col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
+-		col3 := shim.Column{Value: &shim.Column_Int32{Int32: col3Val}}
++		var columns []*tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++		col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++		col3 := tb.Column{Value: &tb.Column_Int32{Int32: col3Val}}
+ 		columns = append(columns, &col1)
+ 		columns = append(columns, &col2)
+ 		columns = append(columns, &col3)
+ 
+-		row := shim.Row{Columns: columns}
++		row := tb.Row{Columns: columns}
+ 		ok, err := stub.InsertRow("tableOne", row)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("insertTableOne operation failed. %s", err)
+@@ -116,17 +117,17 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 		col3Val := int32(col3Int)
+ 		col4Val := args[3]
+ 
+-		var columns []*shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
+-		col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
+-		col3 := shim.Column{Value: &shim.Column_Int32{Int32: col3Val}}
+-		col4 := shim.Column{Value: &shim.Column_String_{String_: col4Val}}
++		var columns []*tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++		col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++		col3 := tb.Column{Value: &tb.Column_Int32{Int32: col3Val}}
++		col4 := tb.Column{Value: &tb.Column_String_{String_: col4Val}}
+ 		columns = append(columns, &col1)
+ 		columns = append(columns, &col2)
+ 		columns = append(columns, &col3)
+ 		columns = append(columns, &col4)
+ 
+-		row := shim.Row{Columns: columns}
++		row := tb.Row{Columns: columns}
+ 		ok, err := stub.InsertRow("tableTwo", row)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("insertRowTableTwo operation failed. %s", err)
+@@ -171,14 +172,14 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 			return nil, errors.New("insertRowTableThree failed. arg[6] must be convertable to bool")
+ 		}
+ 
+-		var columns []*shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
+-		col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
+-		col3 := shim.Column{Value: &shim.Column_Int64{Int64: col3Val}}
+-		col4 := shim.Column{Value: &shim.Column_Uint32{Uint32: col4Val}}
+-		col5 := shim.Column{Value: &shim.Column_Uint64{Uint64: col5Val}}
+-		col6 := shim.Column{Value: &shim.Column_Bytes{Bytes: col6Val}}
+-		col7 := shim.Column{Value: &shim.Column_Bool{Bool: col7Val}}
++		var columns []*tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++		col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++		col3 := tb.Column{Value: &tb.Column_Int64{Int64: col3Val}}
++		col4 := tb.Column{Value: &tb.Column_Uint32{Uint32: col4Val}}
++		col5 := tb.Column{Value: &tb.Column_Uint64{Uint64: col5Val}}
++		col6 := tb.Column{Value: &tb.Column_Bytes{Bytes: col6Val}}
++		col7 := tb.Column{Value: &tb.Column_Bool{Bool: col7Val}}
+ 		columns = append(columns, &col1)
+ 		columns = append(columns, &col2)
+ 		columns = append(columns, &col3)
+@@ -187,7 +188,7 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 		columns = append(columns, &col6)
+ 		columns = append(columns, &col7)
+ 
+-		row := shim.Row{Columns: columns}
++		row := tb.Row{Columns: columns}
+ 		ok, err := stub.InsertRow("tableThree", row)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("insertRowTableThree operation failed. %s", err)
+@@ -203,11 +204,11 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 
+ 		col1Val := args[0]
+ 
+-		var columns []*shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		var columns []*tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, &col1)
+ 
+-		row := shim.Row{Columns: columns}
++		row := tb.Row{Columns: columns}
+ 		ok, err := stub.InsertRow("tableFour", row)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("insertRowTableFour operation failed. %s", err)
+@@ -222,8 +223,8 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 		}
+ 
+ 		col1Val := args[0]
+-		var columns []shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		var columns []tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		err := stub.DeleteRow("tableOne", columns)
+@@ -248,15 +249,15 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) ([]byte, erro
+ 		}
+ 		col3Val := int32(col3Int)
+ 
+-		var columns []*shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
+-		col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
+-		col3 := shim.Column{Value: &shim.Column_Int32{Int32: col3Val}}
++		var columns []*tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++		col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++		col3 := tb.Column{Value: &tb.Column_Int32{Int32: col3Val}}
+ 		columns = append(columns, &col1)
+ 		columns = append(columns, &col2)
+ 		columns = append(columns, &col3)
+ 
+-		row := shim.Row{Columns: columns}
++		row := tb.Row{Columns: columns}
+ 		ok, err := stub.ReplaceRow("tableOne", row)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("replaceRowTableOne operation failed. %s", err)
+@@ -296,8 +297,8 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 		}
+ 
+ 		col1Val := args[0]
+-		var columns []shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		var columns []tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		row, err := stub.GetRow("tableOne", columns)
+@@ -320,10 +321,10 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 		}
+ 		col2Val := int32(col2Int)
+ 		col3Val := args[2]
+-		var columns []shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
+-		col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
+-		col3 := shim.Column{Value: &shim.Column_String_{String_: col3Val}}
++		var columns []tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++		col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++		col3 := tb.Column{Value: &tb.Column_String_{String_: col3Val}}
+ 		columns = append(columns, col1)
+ 		columns = append(columns, col2)
+ 		columns = append(columns, col3)
+@@ -343,8 +344,8 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 
+ 		col1Val := args[0]
+ 
+-		var columns []shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		var columns []tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		row, err := stub.GetRow("tableThree", columns)
+@@ -360,10 +361,10 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 			return nil, errors.New("getRowsTableTwo failed. Must include at least key values")
+ 		}
+ 
+-		var columns []shim.Column
++		var columns []tb.Column
+ 
+ 		col1Val := args[0]
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		if len(args) > 1 {
+@@ -372,7 +373,7 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 				return nil, errors.New("getRowsTableTwo failed. arg[1] must be convertable to int32")
+ 			}
+ 			col2Val := int32(col2Int)
+-			col2 := shim.Column{Value: &shim.Column_Int32{Int32: col2Val}}
++			col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
+ 			columns = append(columns, col2)
+ 		}
+ 
+@@ -381,7 +382,7 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 			return nil, fmt.Errorf("getRowsTableTwo operation failed. %s", err)
+ 		}
+ 
+-		var rows []shim.Row
++		var rows []tb.Row
+ 		for {
+ 			select {
+ 			case row, ok := <-rowChannel:
+@@ -409,8 +410,8 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 		}
+ 
+ 		col1Val := args[0]
+-		var columns []shim.Column
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		var columns []tb.Column
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		row, err := stub.GetRow("tableFour", columns)
+@@ -426,10 +427,10 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 			return nil, errors.New("getRowsTableFour failed. Must include 1 key value")
+ 		}
+ 
+-		var columns []shim.Column
++		var columns []tb.Column
+ 
+ 		col1Val := args[0]
+-		col1 := shim.Column{Value: &shim.Column_String_{String_: col1Val}}
++		col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 		columns = append(columns, col1)
+ 
+ 		rowChannel, err := stub.GetRows("tableFour", columns)
+@@ -437,7 +438,7 @@ func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface) ([]byte, error
+ 			return nil, fmt.Errorf("getRowsTableFour operation failed. %s", err)
+ 		}
+ 
+-		var rows []shim.Row
++		var rows []tb.Row
+ 		for {
+ 			select {
+ 			case row, ok := <-rowChannel:
+@@ -473,13 +474,13 @@ func main() {
+ 
+ func createTableOne(stub shim.ChaincodeStubInterface) error {
+ 	// Create table one
+-	var columnDefsTableOne []*shim.ColumnDefinition
+-	columnOneTableOneDef := shim.ColumnDefinition{Name: "colOneTableOne",
+-		Type: shim.ColumnDefinition_STRING, Key: true}
+-	columnTwoTableOneDef := shim.ColumnDefinition{Name: "colTwoTableOne",
+-		Type: shim.ColumnDefinition_INT32, Key: false}
+-	columnThreeTableOneDef := shim.ColumnDefinition{Name: "colThreeTableOne",
+-		Type: shim.ColumnDefinition_INT32, Key: false}
++	var columnDefsTableOne []*tb.ColumnDefinition
++	columnOneTableOneDef := tb.ColumnDefinition{Name: "colOneTableOne",
++		Type: tb.ColumnDefinition_STRING, Key: true}
++	columnTwoTableOneDef := tb.ColumnDefinition{Name: "colTwoTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
++	columnThreeTableOneDef := tb.ColumnDefinition{Name: "colThreeTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnOneTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnTwoTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnThreeTableOneDef)
+@@ -487,15 +488,15 @@ func createTableOne(stub shim.ChaincodeStubInterface) error {
+ }
+ 
+ func createTableTwo(stub shim.ChaincodeStubInterface) error {
+-	var columnDefsTableTwo []*shim.ColumnDefinition
+-	columnOneTableTwoDef := shim.ColumnDefinition{Name: "colOneTableTwo",
+-		Type: shim.ColumnDefinition_STRING, Key: true}
+-	columnTwoTableTwoDef := shim.ColumnDefinition{Name: "colTwoTableTwo",
+-		Type: shim.ColumnDefinition_INT32, Key: false}
+-	columnThreeTableTwoDef := shim.ColumnDefinition{Name: "colThreeTableThree",
+-		Type: shim.ColumnDefinition_INT32, Key: true}
+-	columnFourTableTwoDef := shim.ColumnDefinition{Name: "colFourTableFour",
+-		Type: shim.ColumnDefinition_STRING, Key: true}
++	var columnDefsTableTwo []*tb.ColumnDefinition
++	columnOneTableTwoDef := tb.ColumnDefinition{Name: "colOneTableTwo",
++		Type: tb.ColumnDefinition_STRING, Key: true}
++	columnTwoTableTwoDef := tb.ColumnDefinition{Name: "colTwoTableTwo",
++		Type: tb.ColumnDefinition_INT32, Key: false}
++	columnThreeTableTwoDef := tb.ColumnDefinition{Name: "colThreeTableThree",
++		Type: tb.ColumnDefinition_INT32, Key: true}
++	columnFourTableTwoDef := tb.ColumnDefinition{Name: "colFourTableFour",
++		Type: tb.ColumnDefinition_STRING, Key: true}
+ 	columnDefsTableTwo = append(columnDefsTableTwo, &columnOneTableTwoDef)
+ 	columnDefsTableTwo = append(columnDefsTableTwo, &columnTwoTableTwoDef)
+ 	columnDefsTableTwo = append(columnDefsTableTwo, &columnThreeTableTwoDef)
+@@ -504,21 +505,21 @@ func createTableTwo(stub shim.ChaincodeStubInterface) error {
+ }
+ 
+ func createTableThree(stub shim.ChaincodeStubInterface) error {
+-	var columnDefsTableThree []*shim.ColumnDefinition
+-	columnOneTableThreeDef := shim.ColumnDefinition{Name: "colOneTableThree",
+-		Type: shim.ColumnDefinition_STRING, Key: true}
+-	columnTwoTableThreeDef := shim.ColumnDefinition{Name: "colTwoTableThree",
+-		Type: shim.ColumnDefinition_INT32, Key: false}
+-	columnThreeTableThreeDef := shim.ColumnDefinition{Name: "colThreeTableThree",
+-		Type: shim.ColumnDefinition_INT64, Key: false}
+-	columnFourTableThreeDef := shim.ColumnDefinition{Name: "colFourTableFour",
+-		Type: shim.ColumnDefinition_UINT32, Key: false}
+-	columnFiveTableThreeDef := shim.ColumnDefinition{Name: "colFourTableFive",
+-		Type: shim.ColumnDefinition_UINT64, Key: false}
+-	columnSixTableThreeDef := shim.ColumnDefinition{Name: "colFourTableSix",
+-		Type: shim.ColumnDefinition_BYTES, Key: false}
+-	columnSevenTableThreeDef := shim.ColumnDefinition{Name: "colFourTableSeven",
+-		Type: shim.ColumnDefinition_BOOL, Key: false}
++	var columnDefsTableThree []*tb.ColumnDefinition
++	columnOneTableThreeDef := tb.ColumnDefinition{Name: "colOneTableThree",
++		Type: tb.ColumnDefinition_STRING, Key: true}
++	columnTwoTableThreeDef := tb.ColumnDefinition{Name: "colTwoTableThree",
++		Type: tb.ColumnDefinition_INT32, Key: false}
++	columnThreeTableThreeDef := tb.ColumnDefinition{Name: "colThreeTableThree",
++		Type: tb.ColumnDefinition_INT64, Key: false}
++	columnFourTableThreeDef := tb.ColumnDefinition{Name: "colFourTableFour",
++		Type: tb.ColumnDefinition_UINT32, Key: false}
++	columnFiveTableThreeDef := tb.ColumnDefinition{Name: "colFourTableFive",
++		Type: tb.ColumnDefinition_UINT64, Key: false}
++	columnSixTableThreeDef := tb.ColumnDefinition{Name: "colFourTableSix",
++		Type: tb.ColumnDefinition_BYTES, Key: false}
++	columnSevenTableThreeDef := tb.ColumnDefinition{Name: "colFourTableSeven",
++		Type: tb.ColumnDefinition_BOOL, Key: false}
+ 	columnDefsTableThree = append(columnDefsTableThree, &columnOneTableThreeDef)
+ 	columnDefsTableThree = append(columnDefsTableThree, &columnTwoTableThreeDef)
+ 	columnDefsTableThree = append(columnDefsTableThree, &columnThreeTableThreeDef)
+@@ -530,9 +531,9 @@ func createTableThree(stub shim.ChaincodeStubInterface) error {
+ }
+ 
+ func createTableFour(stub shim.ChaincodeStubInterface) error {
+-	var columnDefsTableFour []*shim.ColumnDefinition
+-	columnOneTableFourDef := shim.ColumnDefinition{Name: "colOneTableFour",
+-		Type: shim.ColumnDefinition_STRING, Key: true}
++	var columnDefsTableFour []*tb.ColumnDefinition
++	columnOneTableFourDef := tb.ColumnDefinition{Name: "colOneTableFour",
++		Type: tb.ColumnDefinition_STRING, Key: true}
+ 	columnDefsTableFour = append(columnDefsTableFour, &columnOneTableFourDef)
+ 	return stub.CreateTable("tableFour", columnDefsTableFour)
+ }
+diff --git a/core/chaincode/shim/chaincode.go b/core/chaincode/shim/chaincode.go
+index bdad14c..3cfc7cf 100644
+--- a/core/chaincode/shim/chaincode.go
++++ b/core/chaincode/shim/chaincode.go
+@@ -33,6 +33,7 @@ import (
+ 	"github.com/hyperledger/fabric/common/util"
+ 	"github.com/hyperledger/fabric/core/comm"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ 	"github.com/spf13/viper"
+ 	"golang.org/x/net/context"
+@@ -409,11 +410,11 @@ var (
+ )
+ 
+ // CreateTable creates a new table given the table name and column definitions
+-func (stub *ChaincodeStub) CreateTable(name string, columnDefinitions []*ColumnDefinition) error {
++func (stub *ChaincodeStub) CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error {
+ 	return createTableInternal(stub, name, columnDefinitions)
+ }
+ 
+-func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinitions []*ColumnDefinition) error {
++func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinitions []*tb.ColumnDefinition) error {
+ 	_, err := getTable(stub, name)
+ 	if err == nil {
+ 		return fmt.Errorf("CreateTable operation failed. Table %s already exists.", name)
+@@ -444,13 +445,13 @@ func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinit
+ 
+ 		// Check type
+ 		switch definition.Type {
+-		case ColumnDefinition_STRING:
+-		case ColumnDefinition_INT32:
+-		case ColumnDefinition_INT64:
+-		case ColumnDefinition_UINT32:
+-		case ColumnDefinition_UINT64:
+-		case ColumnDefinition_BYTES:
+-		case ColumnDefinition_BOOL:
++		case tb.ColumnDefinition_STRING:
++		case tb.ColumnDefinition_INT32:
++		case tb.ColumnDefinition_INT64:
++		case tb.ColumnDefinition_UINT32:
++		case tb.ColumnDefinition_UINT64:
++		case tb.ColumnDefinition_BYTES:
++		case tb.ColumnDefinition_BOOL:
+ 		default:
+ 			return fmt.Errorf("Column definition %s does not have a valid type.", definition.Name)
+ 		}
+@@ -464,7 +465,7 @@ func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinit
+ 		return errors.New("Inavlid table. One or more columns must be a key.")
+ 	}
+ 
+-	table := &Table{name, columnDefinitions}
++	table := &tb.Table{name, columnDefinitions}
+ 	tableBytes, err := proto.Marshal(table)
+ 	if err != nil {
+ 		return fmt.Errorf("Error marshalling table: %s", err)
+@@ -482,7 +483,7 @@ func createTableInternal(stub ChaincodeStubInterface, name string, columnDefinit
+ 
+ // GetTable returns the table for the specified table name or ErrTableNotFound
+ // if the table does not exist.
+-func (stub *ChaincodeStub) GetTable(tableName string) (*Table, error) {
++func (stub *ChaincodeStub) GetTable(tableName string) (*tb.Table, error) {
+ 	return getTable(stub, tableName)
+ }
+ 
+@@ -523,7 +524,7 @@ func deleteTableInternal(stub ChaincodeStubInterface, tableName string) error {
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *ChaincodeStub) InsertRow(tableName string, row Row) (bool, error) {
++func (stub *ChaincodeStub) InsertRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, false)
+ }
+ 
+@@ -533,18 +534,18 @@ func (stub *ChaincodeStub) InsertRow(tableName string, row Row) (bool, error) {
+ // false and no error if a row does not exist the given key.
+ // flase and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *ChaincodeStub) ReplaceRow(tableName string, row Row) (bool, error) {
++func (stub *ChaincodeStub) ReplaceRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, true)
+ }
+ 
+ // GetRow fetches a row from the specified table for the given key.
+-func (stub *ChaincodeStub) GetRow(tableName string, key []Column) (Row, error) {
++func (stub *ChaincodeStub) GetRow(tableName string, key []tb.Column) (tb.Row, error) {
+ 	return getRowInternal(stub, tableName, key)
+ }
+ 
+-func getRowInternal(stub ChaincodeStubInterface, tableName string, key []Column) (Row, error) {
++func getRowInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) (tb.Row, error) {
+ 
+-	var row Row
++	var row tb.Row
+ 
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+@@ -571,11 +572,11 @@ func getRowInternal(stub ChaincodeStubInterface, tableName string, key []Column)
+ // all rows that have A, C and any value for D as their key. GetRows could
+ // also be called with A only to return all rows that have A and any value
+ // for C and D as their key.
+-func (stub *ChaincodeStub) GetRows(tableName string, key []Column) (<-chan Row, error) {
++func (stub *ChaincodeStub) GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error) {
+ 	return getRowsInternal(stub, tableName, key)
+ }
+ 
+-func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column) (<-chan Row, error) {
++func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) (<-chan tb.Row, error) {
+ 
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+@@ -594,7 +595,7 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		rows := make(chan Row)
++		rows := make(chan tb.Row)
+ 		go func() {
+ 			rows <- row
+ 			close(rows)
+@@ -608,7 +609,7 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 	}
+ 	defer iter.Close()
+ 
+-	rows := make(chan Row)
++	rows := make(chan tb.Row)
+ 
+ 	go func() {
+ 		for iter.HasNext() {
+@@ -617,7 +618,7 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ 				close(rows)
+ 			}
+ 
+-			var row Row
++			var row tb.Row
+ 			err = proto.Unmarshal(rowBytes, &row)
+ 			if err != nil {
+ 				close(rows)
+@@ -634,11 +635,11 @@ func getRowsInternal(stub ChaincodeStubInterface, tableName string, key []Column
+ }
+ 
+ // DeleteRow deletes the row for the given key from the specified table.
+-func (stub *ChaincodeStub) DeleteRow(tableName string, key []Column) error {
++func (stub *ChaincodeStub) DeleteRow(tableName string, key []tb.Column) error {
+ 	return deleteRowInternal(stub, tableName, key)
+ }
+ 
+-func deleteRowInternal(stub ChaincodeStubInterface, tableName string, key []Column) error {
++func deleteRowInternal(stub ChaincodeStubInterface, tableName string, key []tb.Column) error {
+ 
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+@@ -681,7 +682,7 @@ func (stub *ChaincodeStub) GetTxTimestamp() (*timestamp.Timestamp, error) {
+ 	return nil, nil
+ }
+ 
+-func getTable(stub ChaincodeStubInterface, tableName string) (*Table, error) {
++func getTable(stub ChaincodeStubInterface, tableName string) (*tb.Table, error) {
+ 
+ 	tableName, err := getTableNameKey(tableName)
+ 	if err != nil {
+@@ -695,7 +696,7 @@ func getTable(stub ChaincodeStubInterface, tableName string) (*Table, error) {
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error fetching table: %s", err)
+ 	}
+-	table := &Table{}
++	table := &tb.Table{}
+ 	err = proto.Unmarshal(tableBytes, table)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error unmarshalling table: %s", err)
+@@ -721,7 +722,7 @@ func getTableNameKey(name string) (string, error) {
+ 	return strconv.Itoa(len(name)) + name, nil
+ }
+ 
+-func buildKeyString(tableName string, keys []Column) (string, error) {
++func buildKeyString(tableName string, keys []tb.Column) (string, error) {
+ 
+ 	var keyBuffer bytes.Buffer
+ 
+@@ -736,22 +737,22 @@ func buildKeyString(tableName string, keys []Column) (string, error) {
+ 
+ 		var keyString string
+ 		switch key.Value.(type) {
+-		case *Column_String_:
++		case *tb.Column_String_:
+ 			keyString = key.GetString_()
+-		case *Column_Int32:
++		case *tb.Column_Int32:
+ 			// b := make([]byte, 4)
+ 			// binary.LittleEndian.PutUint32(b, uint32(key.GetInt32()))
+ 			// keyBuffer.Write(b)
+ 			keyString = strconv.FormatInt(int64(key.GetInt32()), 10)
+-		case *Column_Int64:
++		case *tb.Column_Int64:
+ 			keyString = strconv.FormatInt(key.GetInt64(), 10)
+-		case *Column_Uint32:
++		case *tb.Column_Uint32:
+ 			keyString = strconv.FormatUint(uint64(key.GetUint32()), 10)
+-		case *Column_Uint64:
++		case *tb.Column_Uint64:
+ 			keyString = strconv.FormatUint(key.GetUint64(), 10)
+-		case *Column_Bytes:
++		case *tb.Column_Bytes:
+ 			keyString = string(key.GetBytes())
+-		case *Column_Bool:
++		case *tb.Column_Bool:
+ 			keyString = strconv.FormatBool(key.GetBool())
+ 		}
+ 
+@@ -762,9 +763,9 @@ func buildKeyString(tableName string, keys []Column) (string, error) {
+ 	return keyBuffer.String(), nil
+ }
+ 
+-func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
++func getKeyAndVerifyRow(table tb.Table, row tb.Row) ([]tb.Column, error) {
+ 
+-	var keys []Column
++	var keys []tb.Column
+ 
+ 	if row.Columns == nil || len(row.Columns) != len(table.ColumnDefinitions) {
+ 		return keys, fmt.Errorf("Table '%s' defines %d columns, but row has %d columns.",
+@@ -776,20 +777,20 @@ func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
+ 		// Check types
+ 		var expectedType bool
+ 		switch column.Value.(type) {
+-		case *Column_String_:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_STRING
+-		case *Column_Int32:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_INT32
+-		case *Column_Int64:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_INT64
+-		case *Column_Uint32:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_UINT32
+-		case *Column_Uint64:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_UINT64
+-		case *Column_Bytes:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_BYTES
+-		case *Column_Bool:
+-			expectedType = table.ColumnDefinitions[i].Type == ColumnDefinition_BOOL
++		case *tb.Column_String_:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_STRING
++		case *tb.Column_Int32:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_INT32
++		case *tb.Column_Int64:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_INT64
++		case *tb.Column_Uint32:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_UINT32
++		case *tb.Column_Uint64:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_UINT64
++		case *tb.Column_Bytes:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_BYTES
++		case *tb.Column_Bool:
++			expectedType = table.ColumnDefinitions[i].Type == tb.ColumnDefinition_BOOL
+ 		default:
+ 			expectedType = false
+ 		}
+@@ -807,7 +808,7 @@ func getKeyAndVerifyRow(table Table, row Row) ([]Column, error) {
+ 	return keys, nil
+ }
+ 
+-func isRowPresent(stub ChaincodeStubInterface, tableName string, key []Column) (bool, error) {
++func isRowPresent(stub ChaincodeStubInterface, tableName string, key []tb.Column) (bool, error) {
+ 	keyString, err := buildKeyString(tableName, key)
+ 	if err != nil {
+ 		return false, err
+@@ -828,7 +829,7 @@ func isRowPresent(stub ChaincodeStubInterface, tableName string, key []Column) (
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func insertRowInternal(stub ChaincodeStubInterface, tableName string, row Row, update bool) (bool, error) {
++func insertRowInternal(stub ChaincodeStubInterface, tableName string, row tb.Row, update bool) (bool, error) {
+ 
+ 	table, err := getTable(stub, tableName)
+ 	if err != nil {
+diff --git a/core/chaincode/shim/interfaces.go b/core/chaincode/shim/interfaces.go
+index cc4646a..a25bc79 100644
+--- a/core/chaincode/shim/interfaces.go
++++ b/core/chaincode/shim/interfaces.go
+@@ -19,6 +19,7 @@ package shim
+ 
+ import (
+ 	"github.com/golang/protobuf/ptypes/timestamp"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // Chaincode interface must be implemented by all chaincodes. The fabric runs
+@@ -70,11 +71,11 @@ type ChaincodeStubInterface interface {
+ 	RangeQueryState(startKey, endKey string) (StateRangeQueryIteratorInterface, error)
+ 
+ 	// CreateTable creates a new table given the table name and column definitions
+-	CreateTable(name string, columnDefinitions []*ColumnDefinition) error
++	CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error
+ 
+ 	// GetTable returns the table for the specified table name or ErrTableNotFound
+ 	// if the table does not exist.
+-	GetTable(tableName string) (*Table, error)
++	GetTable(tableName string) (*tb.Table, error)
+ 
+ 	// DeleteTable deletes an entire table and all associated rows.
+ 	DeleteTable(tableName string) error
+@@ -85,7 +86,7 @@ type ChaincodeStubInterface interface {
+ 	// false and no error if a row already exists for the given key.
+ 	// false and a TableNotFoundError if the specified table name does not exist.
+ 	// false and an error if there is an unexpected error condition.
+-	InsertRow(tableName string, row Row) (bool, error)
++	InsertRow(tableName string, row tb.Row) (bool, error)
+ 
+ 	// ReplaceRow updates the row in the specified table.
+ 	// Returns -
+@@ -93,10 +94,10 @@ type ChaincodeStubInterface interface {
+ 	// false and no error if a row does not exist the given key.
+ 	// flase and a TableNotFoundError if the specified table name does not exist.
+ 	// false and an error if there is an unexpected error condition.
+-	ReplaceRow(tableName string, row Row) (bool, error)
++	ReplaceRow(tableName string, row tb.Row) (bool, error)
+ 
+ 	// GetRow fetches a row from the specified table for the given key.
+-	GetRow(tableName string, key []Column) (Row, error)
++	GetRow(tableName string, key []tb.Column) (tb.Row, error)
+ 
+ 	// GetRows returns multiple rows based on a partial key. For example, given table
+ 	// | A | B | C | D |
+@@ -104,10 +105,10 @@ type ChaincodeStubInterface interface {
+ 	// all rows that have A, C and any value for D as their key. GetRows could
+ 	// also be called with A only to return all rows that have A and any value
+ 	// for C and D as their key.
+-	GetRows(tableName string, key []Column) (<-chan Row, error)
++	GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error)
+ 
+ 	// DeleteRow deletes the row for the given key from the specified table.
+-	DeleteRow(tableName string, key []Column) error
++	DeleteRow(tableName string, key []tb.Column) error
+ 
+ 	// GetCallerCertificate returns caller certificate
+ 	GetCallerCertificate() ([]byte, error)
+diff --git a/core/chaincode/shim/java/build.gradle b/core/chaincode/shim/java/build.gradle
+index b92b102..f74ed58 100644
+--- a/core/chaincode/shim/java/build.gradle
++++ b/core/chaincode/shim/java/build.gradle
+@@ -94,9 +94,11 @@ task copyProtos(type:Copy){
+      include '**/chaincodeevent.proto'
+      include '**/chaincode.proto'
+  }
++    from ("${rootDir}/protos/table"){
++        include '**/table.proto'
++    }
+     from ("../") {
+         duplicatesStrategy.EXCLUDE
+-        include '**/table.proto'
+         exclude 'java'
+     }
+     into "${projectDir}/src/main/proto/peer"
+diff --git a/core/chaincode/shim/mockstub.go b/core/chaincode/shim/mockstub.go
+index 75bbeae..9f04630 100644
+--- a/core/chaincode/shim/mockstub.go
++++ b/core/chaincode/shim/mockstub.go
+@@ -24,6 +24,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/golang/protobuf/ptypes/timestamp"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ )
+ 
+@@ -191,13 +192,13 @@ func (stub *MockStub) RangeQueryState(startKey, endKey string) (StateRangeQueryI
+ }
+ 
+ // CreateTable creates a new table given the table name and column definitions
+-func (stub *MockStub) CreateTable(name string, columnDefinitions []*ColumnDefinition) error {
++func (stub *MockStub) CreateTable(name string, columnDefinitions []*tb.ColumnDefinition) error {
+ 	return createTableInternal(stub, name, columnDefinitions)
+ }
+ 
+ // GetTable returns the table for the specified table name or ErrTableNotFound
+ // if the table does not exist.
+-func (stub *MockStub) GetTable(tableName string) (*Table, error) {
++func (stub *MockStub) GetTable(tableName string) (*tb.Table, error) {
+ 	return getTable(stub, tableName)
+ }
+ 
+@@ -212,7 +213,7 @@ func (stub *MockStub) DeleteTable(tableName string) error {
+ // false and no error if a row already exists for the given key.
+ // false and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *MockStub) InsertRow(tableName string, row Row) (bool, error) {
++func (stub *MockStub) InsertRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, false)
+ }
+ 
+@@ -222,12 +223,12 @@ func (stub *MockStub) InsertRow(tableName string, row Row) (bool, error) {
+ // false and no error if a row does not exist the given key.
+ // flase and a TableNotFoundError if the specified table name does not exist.
+ // false and an error if there is an unexpected error condition.
+-func (stub *MockStub) ReplaceRow(tableName string, row Row) (bool, error) {
++func (stub *MockStub) ReplaceRow(tableName string, row tb.Row) (bool, error) {
+ 	return insertRowInternal(stub, tableName, row, true)
+ }
+ 
+ // GetRow fetches a row from the specified table for the given key.
+-func (stub *MockStub) GetRow(tableName string, key []Column) (Row, error) {
++func (stub *MockStub) GetRow(tableName string, key []tb.Column) (tb.Row, error) {
+ 	return getRowInternal(stub, tableName, key)
+ }
+ 
+@@ -237,12 +238,12 @@ func (stub *MockStub) GetRow(tableName string, key []Column) (Row, error) {
+ // all rows that have A, C and any value for D as their key. GetRows could
+ // also be called with A only to return all rows that have A and any value
+ // for C and D as their key.
+-func (stub *MockStub) GetRows(tableName string, key []Column) (<-chan Row, error) {
++func (stub *MockStub) GetRows(tableName string, key []tb.Column) (<-chan tb.Row, error) {
+ 	return getRowsInternal(stub, tableName, key)
+ }
+ 
+ // DeleteRow deletes the row for the given key from the specified table.
+-func (stub *MockStub) DeleteRow(tableName string, key []Column) error {
++func (stub *MockStub) DeleteRow(tableName string, key []tb.Column) error {
+ 	return deleteRowInternal(stub, tableName, key)
+ }
+ 
+diff --git a/core/chaincode/shim/mockstub_test.go b/core/chaincode/shim/mockstub_test.go
+index 65f664e..2d680cb 100644
+--- a/core/chaincode/shim/mockstub_test.go
++++ b/core/chaincode/shim/mockstub_test.go
+@@ -21,18 +21,19 @@ import (
+ 	"fmt"
+ 	"testing"
+ 
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/spf13/viper"
+ )
+ 
+ func createTable(stub ChaincodeStubInterface) error {
+ 	// Create table one
+-	var columnDefsTableOne []*ColumnDefinition
+-	columnOneTableOneDef := ColumnDefinition{Name: "colOneTableOne",
+-		Type: ColumnDefinition_STRING, Key: true}
+-	columnTwoTableOneDef := ColumnDefinition{Name: "colTwoTableOne",
+-		Type: ColumnDefinition_INT32, Key: false}
+-	columnThreeTableOneDef := ColumnDefinition{Name: "colThreeTableOne",
+-		Type: ColumnDefinition_INT32, Key: false}
++	var columnDefsTableOne []*tb.ColumnDefinition
++	columnOneTableOneDef := tb.ColumnDefinition{Name: "colOneTableOne",
++		Type: tb.ColumnDefinition_STRING, Key: true}
++	columnTwoTableOneDef := tb.ColumnDefinition{Name: "colTwoTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
++	columnThreeTableOneDef := tb.ColumnDefinition{Name: "colThreeTableOne",
++		Type: tb.ColumnDefinition_INT32, Key: false}
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnOneTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnTwoTableOneDef)
+ 	columnDefsTableOne = append(columnDefsTableOne, &columnThreeTableOneDef)
+@@ -40,15 +41,15 @@ func createTable(stub ChaincodeStubInterface) error {
+ }
+ 
+ func insertRow(stub ChaincodeStubInterface, col1Val string, col2Val int32, col3Val int32) error {
+-	var columns []*Column
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
+-	col2 := Column{Value: &Column_Int32{Int32: col2Val}}
+-	col3 := Column{Value: &Column_Int32{Int32: col3Val}}
++	var columns []*tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
++	col2 := tb.Column{Value: &tb.Column_Int32{Int32: col2Val}}
++	col3 := tb.Column{Value: &tb.Column_Int32{Int32: col3Val}}
+ 	columns = append(columns, &col1)
+ 	columns = append(columns, &col2)
+ 	columns = append(columns, &col3)
+ 
+-	row := Row{Columns: columns}
++	row := tb.Row{Columns: columns}
+ 	ok, err := stub.InsertRow("tableOne", row)
+ 	if err != nil {
+ 		return fmt.Errorf("insertTableOne operation failed. %s", err)
+@@ -59,9 +60,9 @@ func insertRow(stub ChaincodeStubInterface, col1Val string, col2Val int32, col3V
+ 	return nil
+ }
+ 
+-func getRow(stub ChaincodeStubInterface, col1Val string) (Row, error) {
+-	var columns []Column
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
++func getRow(stub ChaincodeStubInterface, col1Val string) (tb.Row, error) {
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("tableOne", columns)
+@@ -72,10 +73,10 @@ func getRow(stub ChaincodeStubInterface, col1Val string) (Row, error) {
+ 	return row, nil
+ }
+ 
+-func getRows(stub ChaincodeStubInterface, col1Val string) ([]Row, error) {
+-	var columns []Column
++func getRows(stub ChaincodeStubInterface, col1Val string) ([]tb.Row, error) {
++	var columns []tb.Column
+ 
+-	col1 := Column{Value: &Column_String_{String_: col1Val}}
++	col1 := tb.Column{Value: &tb.Column_String_{String_: col1Val}}
+ 	columns = append(columns, col1)
+ 
+ 	rowChannel, err := stub.GetRows("tableOne", columns)
+@@ -83,7 +84,7 @@ func getRows(stub ChaincodeStubInterface, col1Val string) ([]Row, error) {
+ 		return nil, fmt.Errorf("getRows operation failed. %s", err)
+ 	}
+ 
+-	var rows []Row
++	var rows []tb.Row
+ 	for {
+ 		select {
+ 		case row, ok := <-rowChannel:
+diff --git a/examples/chaincode/go/asset_management/asset_management.go b/examples/chaincode/go/asset_management/asset_management.go
+index 73999eb..34b3879 100644
+--- a/examples/chaincode/go/asset_management/asset_management.go
++++ b/examples/chaincode/go/asset_management/asset_management.go
+@@ -24,6 +24,7 @@ import (
+ 	"github.com/hyperledger/fabric/accesscontrol/impl"
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
+ 	"github.com/hyperledger/fabric/core/crypto/primitives"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ )
+ 
+@@ -47,9 +48,9 @@ func (t *AssetManagementChaincode) Init(stub shim.ChaincodeStubInterface) ([]byt
+ 	}
+ 
+ 	// Create ownership table
+-	err := stub.CreateTable("AssetsOwnership", []*shim.ColumnDefinition{
+-		&shim.ColumnDefinition{Name: "Asset", Type: shim.ColumnDefinition_STRING, Key: true},
+-		&shim.ColumnDefinition{Name: "Owner", Type: shim.ColumnDefinition_BYTES, Key: false},
++	err := stub.CreateTable("AssetsOwnership", []*tb.ColumnDefinition{
++		&tb.ColumnDefinition{Name: "Asset", Type: tb.ColumnDefinition_STRING, Key: true},
++		&tb.ColumnDefinition{Name: "Owner", Type: tb.ColumnDefinition_BYTES, Key: false},
+ 	})
+ 	if err != nil {
+ 		return nil, errors.New("Failed creating AssetsOnwership table.")
+@@ -107,10 +108,10 @@ func (t *AssetManagementChaincode) assign(stub shim.ChaincodeStubInterface, args
+ 	// Register assignment
+ 	myLogger.Debugf("New owner of [%s] is [% x]", asset, owner)
+ 
+-	ok, err = stub.InsertRow("AssetsOwnership", shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-			&shim.Column{Value: &shim.Column_Bytes{Bytes: owner}}},
++	ok, err = stub.InsertRow("AssetsOwnership", tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_String_{String_: asset}},
++			&tb.Column{Value: &tb.Column_Bytes{Bytes: owner}}},
+ 	})
+ 
+ 	if !ok && err == nil {
+@@ -137,8 +138,8 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	// Verify the identity of the caller
+ 	// Only the owner can transfer one of his assets
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+@@ -164,7 +165,7 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 	// At this point, the proof of ownership is valid, then register transfer
+ 	err = stub.DeleteRow(
+ 		"AssetsOwnership",
+-		[]shim.Column{shim.Column{Value: &shim.Column_String_{String_: asset}}},
++		[]tb.Column{tb.Column{Value: &tb.Column_String_{String_: asset}}},
+ 	)
+ 	if err != nil {
+ 		return nil, errors.New("Failed deliting row.")
+@@ -172,10 +173,10 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	_, err = stub.InsertRow(
+ 		"AssetsOwnership",
+-		shim.Row{
+-			Columns: []*shim.Column{
+-				&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-				&shim.Column{Value: &shim.Column_Bytes{Bytes: newOwner}},
++		tb.Row{
++			Columns: []*tb.Column{
++				&tb.Column{Value: &tb.Column_String_{String_: asset}},
++				&tb.Column{Value: &tb.Column_Bytes{Bytes: newOwner}},
+ 			},
+ 		})
+ 	if err != nil {
+@@ -277,8 +278,8 @@ func (t *AssetManagementChaincode) query(stub shim.ChaincodeStubInterface, args
+ 
+ 	myLogger.Debugf("Query [%s]", string(asset))
+ 
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+diff --git a/examples/chaincode/go/asset_management02/depository_handler.go b/examples/chaincode/go/asset_management02/depository_handler.go
+index 081cc85..de9764a 100755
+--- a/examples/chaincode/go/asset_management02/depository_handler.go
++++ b/examples/chaincode/go/asset_management02/depository_handler.go
+@@ -20,6 +20,7 @@ import (
+ 	"errors"
+ 
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
++	tb "github.com/hyperledger/fabric/protos/table"
+ )
+ 
+ // consts associated with chaincode table
+@@ -44,10 +45,10 @@ func NewDepositoryHandler() *depositoryHandler {
+ func (t *depositoryHandler) createTable(stub shim.ChaincodeStubInterface) error {
+ 
+ 	// Create asset depository table
+-	return stub.CreateTable(tableColumn, []*shim.ColumnDefinition{
+-		&shim.ColumnDefinition{Name: columnAccountID, Type: shim.ColumnDefinition_STRING, Key: true},
+-		&shim.ColumnDefinition{Name: columnContactInfo, Type: shim.ColumnDefinition_STRING, Key: false},
+-		&shim.ColumnDefinition{Name: columnAmount, Type: shim.ColumnDefinition_UINT64, Key: false},
++	return stub.CreateTable(tableColumn, []*tb.ColumnDefinition{
++		&tb.ColumnDefinition{Name: columnAccountID, Type: tb.ColumnDefinition_STRING, Key: true},
++		&tb.ColumnDefinition{Name: columnContactInfo, Type: tb.ColumnDefinition_STRING, Key: false},
++		&tb.ColumnDefinition{Name: columnAmount, Type: tb.ColumnDefinition_UINT64, Key: false},
+ 	})
+ 
+ }
+@@ -65,11 +66,11 @@ func (t *depositoryHandler) assign(stub shim.ChaincodeStubInterface,
+ 	myLogger.Debugf("insert accountID= %v", accountID)
+ 
+ 	//insert a new row for this account ID that includes contact information and balance
+-	ok, err := stub.InsertRow(tableColumn, shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_String_{String_: accountID}},
+-			&shim.Column{Value: &shim.Column_String_{String_: contactInfo}},
+-			&shim.Column{Value: &shim.Column_Uint64{Uint64: amount}}},
++	ok, err := stub.InsertRow(tableColumn, tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_String_{String_: accountID}},
++			&tb.Column{Value: &tb.Column_String_{String_: contactInfo}},
++			&tb.Column{Value: &tb.Column_Uint64{Uint64: amount}}},
+ 	})
+ 
+ 	// you can only assign balances to new account IDs
+@@ -94,11 +95,11 @@ func (t *depositoryHandler) updateAccountBalance(stub shim.ChaincodeStubInterfac
+ 	myLogger.Debugf("insert accountID= %v", accountID)
+ 
+ 	//replace the old record row associated with the account ID with the new record row
+-	ok, err := stub.ReplaceRow(tableColumn, shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_String_{String_: accountID}},
+-			&shim.Column{Value: &shim.Column_String_{String_: contactInfo}},
+-			&shim.Column{Value: &shim.Column_Uint64{Uint64: amount}}},
++	ok, err := stub.ReplaceRow(tableColumn, tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_String_{String_: accountID}},
++			&tb.Column{Value: &tb.Column_String_{String_: contactInfo}},
++			&tb.Column{Value: &tb.Column_Uint64{Uint64: amount}}},
+ 	})
+ 
+ 	if !ok && err == nil {
+@@ -118,7 +119,7 @@ func (t *depositoryHandler) deleteAccountRecord(stub shim.ChaincodeStubInterface
+ 	//delete record matching account ID passed in
+ 	err := stub.DeleteRow(
+ 		"AssetsOwnership",
+-		[]shim.Column{shim.Column{Value: &shim.Column_String_{String_: accountID}}},
++		[]tb.Column{tb.Column{Value: &tb.Column_String_{String_: accountID}}},
+ 	)
+ 
+ 	if err != nil {
+@@ -223,10 +224,10 @@ func (t *depositoryHandler) queryAccount(stub shim.ChaincodeStubInterface, accou
+ // queryTable returns the record row matching a correponding account ID on the chaincode state table
+ // stub: chaincodestub
+ // accountID: account ID
+-func (t *depositoryHandler) queryTable(stub shim.ChaincodeStubInterface, accountID string) (shim.Row, error) {
++func (t *depositoryHandler) queryTable(stub shim.ChaincodeStubInterface, accountID string) (tb.Row, error) {
+ 
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: accountID}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: accountID}}
+ 	columns = append(columns, col1)
+ 
+ 	return stub.GetRow(tableColumn, columns)
+diff --git a/examples/chaincode/go/asset_management_interactive/asset_management.go b/examples/chaincode/go/asset_management_interactive/asset_management.go
+index 377c792..50915ec 100644
+--- a/examples/chaincode/go/asset_management_interactive/asset_management.go
++++ b/examples/chaincode/go/asset_management_interactive/asset_management.go
+@@ -24,6 +24,7 @@ import (
+ 	"github.com/hyperledger/fabric/accesscontrol/impl"
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
+ 	"github.com/hyperledger/fabric/core/crypto/primitives"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ )
+ 
+@@ -47,9 +48,9 @@ func (t *AssetManagementChaincode) Init(stub shim.ChaincodeStubInterface) ([]byt
+ 	}
+ 
+ 	// Create ownership table
+-	err := stub.CreateTable("AssetsOwnership", []*shim.ColumnDefinition{
+-		&shim.ColumnDefinition{Name: "Asset", Type: shim.ColumnDefinition_STRING, Key: true},
+-		&shim.ColumnDefinition{Name: "Owner", Type: shim.ColumnDefinition_BYTES, Key: false},
++	err := stub.CreateTable("AssetsOwnership", []*tb.ColumnDefinition{
++		&tb.ColumnDefinition{Name: "Asset", Type: tb.ColumnDefinition_STRING, Key: true},
++		&tb.ColumnDefinition{Name: "Owner", Type: tb.ColumnDefinition_BYTES, Key: false},
+ 	})
+ 	if err != nil {
+ 		return nil, errors.New("Failed creating AssetsOnwership table.")
+@@ -107,10 +108,10 @@ func (t *AssetManagementChaincode) assign(stub shim.ChaincodeStubInterface, args
+ 	// Register assignment
+ 	myLogger.Debugf("New owner of [%s] is [% x]", asset, owner)
+ 
+-	ok, err = stub.InsertRow("AssetsOwnership", shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-			&shim.Column{Value: &shim.Column_Bytes{Bytes: owner}}},
++	ok, err = stub.InsertRow("AssetsOwnership", tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_String_{String_: asset}},
++			&tb.Column{Value: &tb.Column_Bytes{Bytes: owner}}},
+ 	})
+ 
+ 	if !ok && err == nil {
+@@ -137,8 +138,8 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	// Verify the identity of the caller
+ 	// Only the owner can transfer one of his assets
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+@@ -164,7 +165,7 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 	// At this point, the proof of ownership is valid, then register transfer
+ 	err = stub.DeleteRow(
+ 		"AssetsOwnership",
+-		[]shim.Column{shim.Column{Value: &shim.Column_String_{String_: asset}}},
++		[]tb.Column{tb.Column{Value: &tb.Column_String_{String_: asset}}},
+ 	)
+ 	if err != nil {
+ 		return nil, errors.New("Failed deliting row.")
+@@ -172,10 +173,10 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	_, err = stub.InsertRow(
+ 		"AssetsOwnership",
+-		shim.Row{
+-			Columns: []*shim.Column{
+-				&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-				&shim.Column{Value: &shim.Column_Bytes{Bytes: newOwner}},
++		tb.Row{
++			Columns: []*tb.Column{
++				&tb.Column{Value: &tb.Column_String_{String_: asset}},
++				&tb.Column{Value: &tb.Column_Bytes{Bytes: newOwner}},
+ 			},
+ 		})
+ 	if err != nil {
+@@ -282,8 +283,8 @@ func (t *AssetManagementChaincode) Query(stub shim.ChaincodeStubInterface) ([]by
+ 
+ 	myLogger.Debugf("Arg [%s]", string(asset))
+ 
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+diff --git a/examples/chaincode/go/asset_management_with_roles/asset_management_with_roles.go b/examples/chaincode/go/asset_management_with_roles/asset_management_with_roles.go
+index 381277a..056a4c1 100644
+--- a/examples/chaincode/go/asset_management_with_roles/asset_management_with_roles.go
++++ b/examples/chaincode/go/asset_management_with_roles/asset_management_with_roles.go
+@@ -25,6 +25,7 @@ import (
+ 	"github.com/hyperledger/fabric/accesscontrol/crypto/attr"
+ 	"github.com/hyperledger/fabric/accesscontrol/impl"
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ )
+ 
+@@ -66,9 +67,9 @@ func (t *AssetManagementChaincode) Init(stub shim.ChaincodeStubInterface) ([]byt
+ 	}
+ 
+ 	// Create ownership table
+-	err := stub.CreateTable("AssetsOwnership", []*shim.ColumnDefinition{
+-		&shim.ColumnDefinition{Name: "Asset", Type: shim.ColumnDefinition_STRING, Key: true},
+-		&shim.ColumnDefinition{Name: "Owner", Type: shim.ColumnDefinition_BYTES, Key: false},
++	err := stub.CreateTable("AssetsOwnership", []*tb.ColumnDefinition{
++		&tb.ColumnDefinition{Name: "Asset", Type: tb.ColumnDefinition_STRING, Key: true},
++		&tb.ColumnDefinition{Name: "Owner", Type: tb.ColumnDefinition_BYTES, Key: false},
+ 	})
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Failed creating AssetsOnwership table, [%v]", err)
+@@ -136,10 +137,10 @@ func (t *AssetManagementChaincode) assign(stub shim.ChaincodeStubInterface, args
+ 	// Register assignment
+ 	myLogger.Debugf("New owner of [%s] is [% x]", asset, owner)
+ 
+-	ok, err := stub.InsertRow("AssetsOwnership", shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-			&shim.Column{Value: &shim.Column_Bytes{Bytes: account}}},
++	ok, err := stub.InsertRow("AssetsOwnership", tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_String_{String_: asset}},
++			&tb.Column{Value: &tb.Column_Bytes{Bytes: account}}},
+ 	})
+ 
+ 	if !ok && err == nil {
+@@ -165,8 +166,8 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	// Verify the identity of the caller
+ 	// Only the owner can transfer one of his assets
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+@@ -198,7 +199,7 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 	// At this point, the proof of ownership is valid, then register transfer
+ 	err = stub.DeleteRow(
+ 		"AssetsOwnership",
+-		[]shim.Column{shim.Column{Value: &shim.Column_String_{String_: asset}}},
++		[]tb.Column{tb.Column{Value: &tb.Column_String_{String_: asset}}},
+ 	)
+ 	if err != nil {
+ 		return nil, errors.New("Failed deliting row.")
+@@ -206,10 +207,10 @@ func (t *AssetManagementChaincode) transfer(stub shim.ChaincodeStubInterface, ar
+ 
+ 	_, err = stub.InsertRow(
+ 		"AssetsOwnership",
+-		shim.Row{
+-			Columns: []*shim.Column{
+-				&shim.Column{Value: &shim.Column_String_{String_: asset}},
+-				&shim.Column{Value: &shim.Column_Bytes{Bytes: newOwnerAccount}},
++		tb.Row{
++			Columns: []*tb.Column{
++				&tb.Column{Value: &tb.Column_String_{String_: asset}},
++				&tb.Column{Value: &tb.Column_Bytes{Bytes: newOwnerAccount}},
+ 			},
+ 		})
+ 	if err != nil {
+@@ -249,8 +250,8 @@ func (t *AssetManagementChaincode) query(stub shim.ChaincodeStubInterface, args
+ 
+ 	fmt.Printf("ASSET: %v", string(asset))
+ 
+-	var columns []shim.Column
+-	col1 := shim.Column{Value: &shim.Column_String_{String_: asset}}
++	var columns []tb.Column
++	col1 := tb.Column{Value: &tb.Column_String_{String_: asset}}
+ 	columns = append(columns, col1)
+ 
+ 	row, err := stub.GetRow("AssetsOwnership", columns)
+diff --git a/examples/chaincode/go/rbac_tcerts_no_attrs/rbac.go b/examples/chaincode/go/rbac_tcerts_no_attrs/rbac.go
+index 564cb71..3a31a16 100644
+--- a/examples/chaincode/go/rbac_tcerts_no_attrs/rbac.go
++++ b/examples/chaincode/go/rbac_tcerts_no_attrs/rbac.go
+@@ -26,6 +26,7 @@ import (
+ 
+ 	"github.com/hyperledger/fabric/accesscontrol/impl"
+ 	"github.com/hyperledger/fabric/core/chaincode/shim"
++	tb "github.com/hyperledger/fabric/protos/table"
+ 	"github.com/op/go-logging"
+ )
+ 
+@@ -52,9 +53,9 @@ func (t *RBACChaincode) Init(stub shim.ChaincodeStubInterface) ([]byte, error) {
+ 	myLogger.Debug("Creating RBAC Table...")
+ 
+ 	// Create RBAC table
+-	err := stub.CreateTable("RBAC", []*shim.ColumnDefinition{
+-		&shim.ColumnDefinition{Name: "ID", Type: shim.ColumnDefinition_BYTES, Key: true},
+-		&shim.ColumnDefinition{Name: "Roles", Type: shim.ColumnDefinition_STRING, Key: false},
++	err := stub.CreateTable("RBAC", []*tb.ColumnDefinition{
++		&tb.ColumnDefinition{Name: "ID", Type: tb.ColumnDefinition_BYTES, Key: true},
++		&tb.ColumnDefinition{Name: "Roles", Type: tb.ColumnDefinition_STRING, Key: false},
+ 	})
+ 	if err != nil {
+ 		return nil, errors.New("Failed creating RBAC table.")
+@@ -72,10 +73,10 @@ func (t *RBACChaincode) Init(stub shim.ChaincodeStubInterface) ([]byte, error) {
+ 	}
+ 
+ 	myLogger.Debug("Add admin [% x][%s]", deployer, "admin")
+-	ok, err := stub.InsertRow("RBAC", shim.Row{
+-		Columns: []*shim.Column{
+-			&shim.Column{Value: &shim.Column_Bytes{Bytes: deployer}},
+-			&shim.Column{Value: &shim.Column_String_{String_: "admin"}},
++	ok, err := stub.InsertRow("RBAC", tb.Row{
++		Columns: []*tb.Column{
++			&tb.Column{Value: &tb.Column_Bytes{Bytes: deployer}},
++			&tb.Column{Value: &tb.Column_String_{String_: "admin"}},
+ 		},
+ 	})
+ 	if !ok && err == nil {
+@@ -132,8 +133,8 @@ func (t *RBACChaincode) addRole(stub shim.ChaincodeStubInterface, args []string)
+ 	myLogger.Debug("Permission granted to the invoker")
+ 
+ 	// Retrieve id's row
+-	var columns []shim.Column
+-	idCol := shim.Column{Value: &shim.Column_Bytes{Bytes: id}}
++	var columns []tb.Column
++	idCol := tb.Column{Value: &tb.Column_Bytes{Bytes: id}}
+ 	columns = append(columns, idCol)
+ 	row, err := stub.GetRow("RBAC", columns)
+ 	if err != nil {
+@@ -141,10 +142,10 @@ func (t *RBACChaincode) addRole(stub shim.ChaincodeStubInterface, args []string)
+ 	}
+ 	if len(row.Columns) == 0 {
+ 		// Insert row
+-		ok, err = stub.InsertRow("RBAC", shim.Row{
+-			Columns: []*shim.Column{
+-				&shim.Column{Value: &shim.Column_Bytes{Bytes: id}},
+-				&shim.Column{Value: &shim.Column_String_{String_: role}},
++		ok, err = stub.InsertRow("RBAC", tb.Row{
++			Columns: []*tb.Column{
++				&tb.Column{Value: &tb.Column_Bytes{Bytes: id}},
++				&tb.Column{Value: &tb.Column_String_{String_: role}},
+ 			},
+ 		})
+ 		if err != nil {
+@@ -156,10 +157,10 @@ func (t *RBACChaincode) addRole(stub shim.ChaincodeStubInterface, args []string)
+ 
+ 	} else {
+ 		// Update row
+-		ok, err = stub.ReplaceRow("RBAC", shim.Row{
+-			Columns: []*shim.Column{
+-				&shim.Column{Value: &shim.Column_Bytes{Bytes: id}},
+-				&shim.Column{Value: &shim.Column_String_{String_: row.Columns[1].GetString_() + " " + role}},
++		ok, err = stub.ReplaceRow("RBAC", tb.Row{
++			Columns: []*tb.Column{
++				&tb.Column{Value: &tb.Column_Bytes{Bytes: id}},
++				&tb.Column{Value: &tb.Column_String_{String_: row.Columns[1].GetString_() + " " + role}},
+ 			},
+ 		})
+ 		if err != nil {
+@@ -271,8 +272,8 @@ func (t *RBACChaincode) hasInvokerRole(stub shim.ChaincodeStubInterface, role st
+ 	myLogger.Debug("ID [% x]", rbacMetadata.Cert)
+ 
+ 	// Check role
+-	var columns []shim.Column
+-	idCol := shim.Column{Value: &shim.Column_Bytes{Bytes: rbacMetadata.Cert}}
++	var columns []tb.Column
++	idCol := tb.Column{Value: &tb.Column_Bytes{Bytes: rbacMetadata.Cert}}
+ 	columns = append(columns, idCol)
+ 	row, err := stub.GetRow("RBAC", columns)
+ 	if err != nil {
+diff --git a/core/chaincode/shim/table.pb.go b/protos/table/table.pb.go
+similarity index 75%
+rename from core/chaincode/shim/table.pb.go
+rename to protos/table/table.pb.go
+index 3b55552..f7f292c 100644
+--- a/core/chaincode/shim/table.pb.go
++++ b/protos/table/table.pb.go
+@@ -1,12 +1,12 @@
+ // Code generated by protoc-gen-go.
+-// source: table.proto
++// source: table/table.proto
+ // DO NOT EDIT!
+ 
+ /*
+-Package shim is a generated protocol buffer package.
++Package table is a generated protocol buffer package.
+ 
+ It is generated from these files:
+-	table.proto
++	table/table.proto
+ 
+ It has these top-level messages:
+ 	ColumnDefinition
+@@ -14,7 +14,7 @@ It has these top-level messages:
+ 	Column
+ 	Row
+ */
+-package shim
++package table
+ 
+ import proto "github.com/golang/protobuf/proto"
+ import fmt "fmt"
+@@ -69,7 +69,7 @@ func (ColumnDefinition_Type) EnumDescriptor() ([]byte, []int) { return fileDescr
+ 
+ type ColumnDefinition struct {
+ 	Name string                `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+-	Type ColumnDefinition_Type `protobuf:"varint,2,opt,name=type,enum=shim.ColumnDefinition_Type" json:"type,omitempty"`
++	Type ColumnDefinition_Type `protobuf:"varint,2,opt,name=type,enum=protos.ColumnDefinition_Type" json:"type,omitempty"`
+ 	Key  bool                  `protobuf:"varint,3,opt,name=key" json:"key,omitempty"`
+ }
+ 
+@@ -359,41 +359,41 @@ func (m *Row) GetColumns() []*Column {
+ }
+ 
+ func init() {
+-	proto.RegisterType((*ColumnDefinition)(nil), "shim.ColumnDefinition")
+-	proto.RegisterType((*Table)(nil), "shim.Table")
+-	proto.RegisterType((*Column)(nil), "shim.Column")
+-	proto.RegisterType((*Row)(nil), "shim.Row")
+-	proto.RegisterEnum("shim.ColumnDefinition_Type", ColumnDefinition_Type_name, ColumnDefinition_Type_value)
++	proto.RegisterType((*ColumnDefinition)(nil), "protos.ColumnDefinition")
++	proto.RegisterType((*Table)(nil), "protos.Table")
++	proto.RegisterType((*Column)(nil), "protos.Column")
++	proto.RegisterType((*Row)(nil), "protos.Row")
++	proto.RegisterEnum("protos.ColumnDefinition_Type", ColumnDefinition_Type_name, ColumnDefinition_Type_value)
+ }
+ 
+-func init() { proto.RegisterFile("table.proto", fileDescriptor0) }
++func init() { proto.RegisterFile("table/table.proto", fileDescriptor0) }
+ 
+ var fileDescriptor0 = []byte{
+-	// 413 bytes of a gzipped FileDescriptorProto
+-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x6c, 0x52, 0xd1, 0x6a, 0xdb, 0x30,
+-	0x14, 0x8d, 0x62, 0xd9, 0x69, 0x6f, 0xbb, 0xa1, 0x89, 0x11, 0x04, 0x7b, 0x31, 0x7e, 0x18, 0x7e,
+-	0x99, 0xcd, 0x12, 0xe3, 0x0f, 0xf0, 0x3a, 0x96, 0xc2, 0x68, 0x87, 0xea, 0x32, 0xb6, 0x37, 0xdb,
+-	0x55, 0x13, 0x31, 0xc7, 0x0a, 0xb6, 0xb2, 0xe1, 0x8f, 0x1b, 0xec, 0xd3, 0x86, 0xa4, 0x04, 0x4a,
+-	0x9b, 0xb7, 0x7b, 0xee, 0x3d, 0xe7, 0xe8, 0xde, 0x83, 0xe0, 0x42, 0x57, 0x75, 0x2b, 0x92, 0x5d,
+-	0xaf, 0xb4, 0xa2, 0x78, 0xd8, 0xc8, 0x6d, 0xf4, 0x0f, 0x01, 0xf9, 0xa4, 0xda, 0xfd, 0xb6, 0xbb,
+-	0x12, 0x8f, 0xb2, 0x93, 0x5a, 0xaa, 0x8e, 0x52, 0xc0, 0x5d, 0xb5, 0x15, 0x0c, 0x85, 0x28, 0x3e,
+-	0xe7, 0xb6, 0xa6, 0x29, 0x60, 0x3d, 0xee, 0x04, 0x9b, 0x86, 0x28, 0x7e, 0xbd, 0x78, 0x97, 0x18,
+-	0x75, 0xf2, 0x5c, 0x99, 0x94, 0xe3, 0x4e, 0x70, 0x4b, 0xa4, 0x04, 0xbc, 0x5f, 0x62, 0x64, 0x5e,
+-	0x88, 0xe2, 0x33, 0x6e, 0xca, 0xe8, 0x1e, 0xb0, 0x99, 0x53, 0x80, 0xe0, 0xae, 0xe4, 0xd7, 0x37,
+-	0x5f, 0xc8, 0x84, 0x9e, 0x83, 0x7f, 0x7d, 0x53, 0x2e, 0x17, 0x04, 0x1d, 0xca, 0x3c, 0x23, 0x53,
+-	0xc3, 0xb8, 0x77, 0x6d, 0xef, 0x58, 0xe7, 0x19, 0xc1, 0x86, 0x52, 0xfc, 0x28, 0x3f, 0xdf, 0x11,
+-	0x9f, 0x9e, 0x01, 0x2e, 0x6e, 0x6f, 0xbf, 0x92, 0x20, 0xaa, 0xc0, 0x2f, 0xcd, 0x5d, 0x27, 0xd7,
+-	0xbe, 0x82, 0x37, 0xcd, 0xb3, 0x25, 0x07, 0x36, 0x0d, 0xbd, 0xf8, 0x62, 0x31, 0x3f, 0x7d, 0x03,
+-	0x7f, 0x29, 0x88, 0xfe, 0x22, 0x08, 0x1c, 0x8f, 0x32, 0x08, 0x06, 0xdd, 0xcb, 0x6e, 0xed, 0x9e,
+-	0x59, 0x4d, 0xf8, 0x01, 0xd3, 0x39, 0xf8, 0xb2, 0xd3, 0xcb, 0x85, 0x8d, 0xc8, 0x5f, 0x4d, 0xb8,
+-	0x83, 0x87, 0x7e, 0x9e, 0xd9, 0x28, 0xbc, 0x43, 0x3f, 0xcf, 0x8c, 0xd3, 0xde, 0x09, 0x70, 0x88,
+-	0xe2, 0x57, 0xc6, 0xc9, 0xe1, 0xe3, 0x24, 0xcf, 0x98, 0x1f, 0xa2, 0x18, 0x1f, 0x27, 0x79, 0x66,
+-	0xbc, 0xea, 0x51, 0x8b, 0x81, 0x05, 0x21, 0x8a, 0x2f, 0x8d, 0x97, 0x85, 0xf4, 0x2d, 0xe0, 0x5a,
+-	0xa9, 0x96, 0xcd, 0x4c, 0xda, 0xab, 0x09, 0xb7, 0xa8, 0x98, 0x81, 0xff, 0xbb, 0x6a, 0xf7, 0x22,
+-	0xfa, 0x00, 0x1e, 0x57, 0x7f, 0xe8, 0x7b, 0x98, 0xb9, 0xdb, 0x06, 0x86, 0x6c, 0x04, 0x97, 0x4f,
+-	0x23, 0xe0, 0xc7, 0x61, 0xf1, 0x1d, 0xe6, 0xaa, 0x5f, 0x27, 0x9b, 0x71, 0x27, 0xfa, 0x56, 0x3c,
+-	0xac, 0x45, 0xef, 0xfe, 0xcc, 0x50, 0x80, 0x4d, 0xfa, 0x9b, 0x01, 0x3f, 0x3f, 0xae, 0xa5, 0xde,
+-	0xec, 0xeb, 0xa4, 0x51, 0xdb, 0xf4, 0x09, 0x35, 0x7d, 0xac, 0xea, 0x5e, 0x36, 0x69, 0xa3, 0x7a,
+-	0x91, 0x36, 0x9b, 0x4a, 0x76, 0x8d, 0x7a, 0x10, 0xa9, 0x79, 0xa8, 0x0e, 0xac, 0xcd, 0xf2, 0x7f,
+-	0x00, 0x00, 0x00, 0xff, 0xff, 0x35, 0x1b, 0xaf, 0x40, 0x89, 0x02, 0x00, 0x00,
++	// 404 bytes of a gzipped FileDescriptorProto
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x74, 0x52, 0x4d, 0x6f, 0x9c, 0x30,
++	0x10, 0x5d, 0x2f, 0x86, 0x4d, 0xa6, 0x6d, 0xe4, 0x58, 0x55, 0xe4, 0x4b, 0x25, 0xc4, 0xc9, 0xea,
++	0x01, 0xd4, 0x5d, 0xc4, 0x0f, 0xa0, 0x5f, 0x1b, 0xa9, 0x4a, 0x22, 0x87, 0x1c, 0xda, 0xdb, 0xb2,
++	0x75, 0x36, 0xa8, 0x2c, 0x46, 0x60, 0x5a, 0xf1, 0xe3, 0x7a, 0xe9, 0x2f, 0xab, 0x6c, 0x83, 0xd4,
++	0xa6, 0xcd, 0x05, 0xe6, 0xcd, 0xbc, 0xf7, 0xec, 0x79, 0x32, 0x9c, 0xeb, 0x5d, 0x59, 0xcb, 0xc4,
++	0x7e, 0xe3, 0xb6, 0x53, 0x5a, 0xd1, 0xc0, 0xfe, 0xfa, 0xe8, 0x17, 0x02, 0xf2, 0x56, 0xd5, 0xc3,
++	0xb1, 0x79, 0x27, 0xef, 0xab, 0xa6, 0xd2, 0x95, 0x6a, 0x28, 0x05, 0xdc, 0xec, 0x8e, 0x92, 0xa1,
++	0x10, 0xf1, 0x53, 0x61, 0x6b, 0xfa, 0x06, 0xb0, 0x1e, 0x5b, 0xc9, 0x96, 0x21, 0xe2, 0x67, 0xeb,
++	0x57, 0xce, 0xa6, 0x8f, 0x1f, 0x6b, 0xe3, 0x62, 0x6c, 0xa5, 0xb0, 0x54, 0x4a, 0xc0, 0xfb, 0x26,
++	0x47, 0xe6, 0x85, 0x88, 0x9f, 0x08, 0x53, 0x46, 0x77, 0x80, 0xcd, 0x9c, 0x02, 0x04, 0xb7, 0x85,
++	0xb8, 0xbc, 0xfa, 0x48, 0x16, 0xf4, 0x14, 0xfc, 0xcb, 0xab, 0x62, 0xb3, 0x26, 0x68, 0x2a, 0xb3,
++	0x94, 0x2c, 0x0d, 0xe3, 0xce, 0xb5, 0xbd, 0xb9, 0xce, 0x52, 0x82, 0x0d, 0x25, 0xff, 0x5c, 0xbc,
++	0xbf, 0x25, 0x3e, 0x3d, 0x01, 0x9c, 0x5f, 0x5f, 0x7f, 0x22, 0x41, 0xb4, 0x07, 0xbf, 0x30, 0xbb,
++	0xfd, 0xf7, 0xe2, 0x1f, 0xe0, 0x7c, 0xff, 0xe8, 0x92, 0x3d, 0x5b, 0x86, 0x1e, 0x7f, 0xb6, 0x66,
++	0x4f, 0x6d, 0x21, 0xfe, 0x95, 0x44, 0x3f, 0x11, 0x04, 0x8e, 0x47, 0x19, 0x04, 0xbd, 0xee, 0xaa,
++	0xe6, 0xe0, 0x0e, 0xda, 0x2e, 0xc4, 0x84, 0xe9, 0x05, 0xf8, 0x55, 0xa3, 0x37, 0x6b, 0x1b, 0x93,
++	0xbf, 0x5d, 0x08, 0x07, 0xa7, 0x7e, 0x96, 0xda, 0x30, 0xbc, 0xa9, 0x9f, 0xa5, 0xc6, 0x69, 0x70,
++	0x02, 0x1c, 0x22, 0xfe, 0xc2, 0x38, 0x39, 0x3c, 0x4f, 0xb2, 0x94, 0xf9, 0x21, 0xe2, 0x78, 0x9e,
++	0x64, 0xa9, 0xf1, 0x2a, 0x47, 0x2d, 0x7b, 0x16, 0x84, 0x88, 0x3f, 0x37, 0x5e, 0x16, 0xd2, 0x97,
++	0x80, 0x4b, 0xa5, 0x6a, 0xb6, 0x32, 0x79, 0x6f, 0x17, 0xc2, 0xa2, 0x7c, 0x05, 0xfe, 0xf7, 0x5d,
++	0x3d, 0xc8, 0x28, 0x01, 0x4f, 0xa8, 0x1f, 0x94, 0xc3, 0xca, 0xed, 0xd6, 0x33, 0x64, 0x43, 0x38,
++	0xfb, 0x3b, 0x04, 0x31, 0x8f, 0xf3, 0x1b, 0xb8, 0x50, 0xdd, 0x21, 0x7e, 0x18, 0x5b, 0xd9, 0xd5,
++	0xf2, 0xeb, 0x41, 0x76, 0x13, 0x33, 0x07, 0x9b, 0xf6, 0x8d, 0x01, 0x5f, 0x5e, 0x1f, 0x2a, 0xfd,
++	0x30, 0x94, 0xf1, 0x5e, 0x1d, 0x93, 0x3f, 0xa8, 0xc9, 0xfd, 0xae, 0xec, 0xaa, 0x7d, 0xe2, 0x14,
++	0xee, 0xe9, 0x95, 0xee, 0xd1, 0x6d, 0x7e, 0x07, 0x00, 0x00, 0xff, 0xff, 0xf1, 0x2c, 0x56, 0x19,
++	0x90, 0x02, 0x00, 0x00,
+ }
+diff --git a/core/chaincode/shim/table.proto b/protos/table/table.proto
+similarity index 93%
+rename from core/chaincode/shim/table.proto
+rename to protos/table/table.proto
+index 056c890..32e857b 100644
+--- a/core/chaincode/shim/table.proto
++++ b/protos/table/table.proto
+@@ -16,9 +16,9 @@ limitations under the License.
+ 
+ syntax = "proto3";
+ 
+-option go_package = "github.com/hyperledger/fabric/core/chaincode/shim" ;
++option go_package = "github.com/hyperledger/fabric/protos/table" ;
+ 
+-package shim;
++package protos;
+ option java_package = "org.hyperledger.protos";
+ option java_outer_classname = "TableProto";
+ message ColumnDefinition {

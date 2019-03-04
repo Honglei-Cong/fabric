@@ -1,0 +1,148 @@
+diff --git a/examples/ccchecker/chaincodes/chaincodes.go b/examples/ccchecker/chaincodes/chaincodes.go
+index 4ee92b4..d40b2fb 100644
+--- a/examples/ccchecker/chaincodes/chaincodes.go
++++ b/examples/ccchecker/chaincodes/chaincodes.go
+@@ -158,7 +158,7 @@ func (cc *CCClient) doInvokes(ctxt context.Context, chainID string,
+ 		}
+ 
+ 		var pResp *pb.ProposalResponse
+-		if pResp, err = chaincode.ChaincodeInvokeOrQuery(spec, chainID, true, signer, ec, bc); err != nil {
++		if pResp, err = chaincode.ChaincodeInvokeOrQuery(spec, chainID, chaincode.ChaincodeInvoke, signer, ec, bc); err != nil {
+ 			cc.invokeErr = err
+ 			break
+ 		}
+@@ -237,7 +237,7 @@ func (cc *CCClient) validateIter(ctxt context.Context, iter int, chainID string,
+ 
+ 		var pResp *pb.ProposalResponse
+ 		var err error
+-		if pResp, err = chaincode.ChaincodeInvokeOrQuery(spec, chainID, false, signer, ec, bc); err != nil {
++		if pResp, err = chaincode.ChaincodeInvokeOrQuery(spec, chainID, chaincode.ChaincodeQuery, signer, ec, bc); err != nil {
+ 			cc.queryErrs[iter] = err
+ 			break
+ 		}
+diff --git a/peer/chaincode/common.go b/peer/chaincode/common.go
+index 9e1b192..76808dd 100644
+--- a/peer/chaincode/common.go
++++ b/peer/chaincode/common.go
+@@ -24,6 +24,8 @@ import (
+ 	"strings"
+ 
+ 	"github.com/hyperledger/fabric/common/cauthdsl"
++	"github.com/hyperledger/fabric/common/configtx"
++	configtxapi "github.com/hyperledger/fabric/common/configtx/api"
+ 	"github.com/hyperledger/fabric/core/chaincode"
+ 	"github.com/hyperledger/fabric/core/chaincode/platforms"
+ 	"github.com/hyperledger/fabric/core/container"
+@@ -97,7 +99,11 @@ func chaincodeInvokeOrQuery(cmd *cobra.Command, args []string, invoke bool, cf *
+ 		return err
+ 	}
+ 
+-	proposalResp, err := ChaincodeInvokeOrQuery(spec, chainID, invoke, cf.Signer, cf.EndorserClient, cf.BroadcastClient)
++	funcName := ChaincodeInvoke
++	if !invoke {
++		funcName = ChaincodeQuery
++	}
++	proposalResp, err := ChaincodeInvokeOrQuery(spec, chainID, funcName, cf.Signer, cf.EndorserClient, cf.BroadcastClient)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -210,6 +216,41 @@ func checkChaincodeCmdParams(cmd *cobra.Command) error {
+ 	return nil
+ }
+ 
++func getOrdererEndpointOfChain(cID string, signer msp.SigningIdentity, endorserClient pb.EndorserClient) ([]string, error) {
++
++	input := &pb.ChaincodeInput{Args: [][]byte{[]byte("GetConfigBlock"), []byte(cID)}}
++	spec := &pb.ChaincodeSpec{
++		Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value["GOLANG"]),
++		ChaincodeId: &pb.ChaincodeID{Name: "cscc"},
++		Input:       input,
++	}
++	resp, err := ChaincodeInvokeOrQuery(spec, "", ChaincodeGetConfigBlock, signer, endorserClient, nil)
++	if err != nil {
++		return nil, err
++	}
++
++	block, err := putils.GetBlockFromBlockBytes(resp.Response.Payload)
++	if err != nil {
++		return nil, err
++	}
++
++	envelopeConfig, err := putils.ExtractEnvelope(block, 0)
++	if err != nil {
++		return nil, err
++	}
++	configtxInitializer := configtx.NewInitializer()
++	configtxManager, err := configtx.NewManagerImpl(
++		envelopeConfig,
++		configtxInitializer,
++		[]func(cm configtxapi.Manager){},
++	)
++	if err != nil {
++		return nil, err
++	}
++
++	return configtxManager.ChannelConfig().OrdererAddresses(), nil
++}
++
+ // ChaincodeCmdFactory holds the clients used by ChaincodeCmd
+ type ChaincodeCmdFactory struct {
+ 	EndorserClient  pb.EndorserClient
+@@ -229,6 +270,15 @@ func InitCmdFactory() (*ChaincodeCmdFactory, error) {
+ 		return nil, fmt.Errorf("Error getting default signer: %s", err)
+ 	}
+ 
++	if len(orderingEndpoint) == 0 {
++		orderingEndpoints, err := getOrdererEndpointOfChain(chainID, signer, endorserClient)
++		if err != nil || len(orderingEndpoints) == 0 {
++			return nil, fmt.Errorf("Error failed to get (%s) orderer endpoint: %s", chainID, err)
++		}
++		logger.Infof("Get chain(%s) orderer endpoint: %s", chainID, orderingEndpoints[0])
++		orderingEndpoint = orderingEndpoints[0]
++	}
++
+ 	broadcastClient, err := common.GetBroadcastClient(orderingEndpoint)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error getting broadcast client: %s", err)
+@@ -250,7 +300,13 @@ func InitCmdFactory() (*ChaincodeCmdFactory, error) {
+ //
+ // NOTE - Query will likely go away as all interactions with the endorser are
+ // Proposal and ProposalResponses
+-func ChaincodeInvokeOrQuery(spec *pb.ChaincodeSpec, cID string, invoke bool, signer msp.SigningIdentity, endorserClient pb.EndorserClient, bc common.BroadcastClient) (*pb.ProposalResponse, error) {
++
++const (
++	ChaincodeInvoke         string = "invoke"
++	ChaincodeQuery          string = "query"
++	ChaincodeGetConfigBlock string = "getconfigblock"
++)
++func ChaincodeInvokeOrQuery(spec *pb.ChaincodeSpec, cID string, funcName string, signer msp.SigningIdentity, endorserClient pb.EndorserClient, bc common.BroadcastClient) (*pb.ProposalResponse, error) {
+ 	// Build the ChaincodeInvocationSpec message
+ 	invocation := &pb.ChaincodeInvocationSpec{ChaincodeSpec: spec}
+ 	if customIDGenAlg != common.UndefinedParamValue {
+@@ -262,13 +318,22 @@ func ChaincodeInvokeOrQuery(spec *pb.ChaincodeSpec, cID string, invoke bool, sig
+ 		return nil, fmt.Errorf("Error serializing identity for %s: %s", signer.GetIdentifier(), err)
+ 	}
+ 
+-	funcName := "invoke"
+-	if !invoke {
+-		funcName = "query"
++	var invoke bool
++	var proposalType pcommon.HeaderType
++	switch funcName {
++	case ChaincodeInvoke:
++		invoke = true
++		proposalType = pcommon.HeaderType_ENDORSER_TRANSACTION
++	case ChaincodeQuery:
++		invoke = false
++		proposalType = pcommon.HeaderType_ENDORSER_TRANSACTION
++	case ChaincodeGetConfigBlock:
++		invoke = false
++		proposalType = pcommon.HeaderType_CONFIG
+ 	}
+ 
+ 	var prop *pb.Proposal
+-	prop, _, err = putils.CreateProposalFromCIS(pcommon.HeaderType_ENDORSER_TRANSACTION, cID, invocation, creator)
++	prop, _, err = putils.CreateProposalFromCIS(proposalType, cID, invocation, creator)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("Error creating proposal  %s: %s", funcName, err)
+ 	}

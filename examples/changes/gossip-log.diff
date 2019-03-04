@@ -1,0 +1,100 @@
+diff --git a/gossip/comm/comm_impl.go b/gossip/comm/comm_impl.go
+index 6cc3198..0863164 100644
+--- a/gossip/comm/comm_impl.go
++++ b/gossip/comm/comm_impl.go
+@@ -189,7 +189,7 @@ func (c *commImpl) createConnection(endpoint string, expectedPKIID common.PKIidT
+ 		if err == nil {
+ 			if expectedPKIID != nil && !bytes.Equal(pkiID, expectedPKIID) {
+ 				// PKIID is nil when we don't know the remote PKI id's
+-				c.logger.Warning("Remote endpoint claims to be a different peer, expected", expectedPKIID, "but got", pkiID)
++				c.logger.Warning("Remote endpoint claims to be a different peer, expected", expectedPKIID, "but got", pkiID, "str: ", string(pkiID))
+ 				return nil, fmt.Errorf("Authentication failure")
+ 			}
+ 			conn := newConnection(cl, cc, stream, nil)
+@@ -217,9 +217,8 @@ func (c *commImpl) Send(msg *proto.GossipMessage, peers ...*RemotePeer) {
+ 		return
+ 	}
+ 
+-	c.logger.Info("Entering, sending", msg, "to ", len(peers), "peers")
+-
+ 	for _, peer := range peers {
++		c.logger.Warning("Entering, sending", msg, "to ", string(peer.PKIID), "peers")
+ 		go func(peer *RemotePeer, msg *proto.GossipMessage) {
+ 			c.sendToEndpoint(peer, msg)
+ 		}(peer, msg)
+@@ -407,7 +406,7 @@ func (c *commImpl) authenticateRemotePeer(stream stream) (common.PKIidType, erro
+ 
+ 	cMsg = createConnectionMsg(c.PKIID, c.selfCertHash, c.peerIdentity, signer)
+ 
+-	c.logger.Debug("Sending", cMsg, "to", remoteAddress)
++	c.logger.Warning("Sending", cMsg, "to", remoteAddress)
+ 	stream.Send(cMsg)
+ 	m := readWithTimeout(stream, defConnTimeout)
+ 	if m == nil {
+@@ -429,7 +428,8 @@ func (c *commImpl) authenticateRemotePeer(stream stream) (common.PKIidType, erro
+ 		c.logger.Warning("Connection attempt from", remoteAddress, "but it is black-listed")
+ 		return nil, fmt.Errorf("Black-listed")
+ 	}
+-	c.logger.Debug("Received", receivedMsg, "from", remoteAddress)
++
++	c.logger.Warning("Received", receivedMsg, "from", remoteAddress)
+ 	err = c.idMapper.Put(receivedMsg.PkiID, receivedMsg.Cert)
+ 	if err != nil {
+ 		c.logger.Warning("Identity store rejected", remoteAddress, ":", err)
+diff --git a/gossip/discovery/discovery_impl.go b/gossip/discovery/discovery_impl.go
+index 335a794..be11398 100644
+--- a/gossip/discovery/discovery_impl.go
++++ b/gossip/discovery/discovery_impl.go
+@@ -401,6 +401,8 @@ func (d *gossipDiscoveryImpl) handleAliveMessage(m *proto.GossipMessage) {
+ 		return
+ 	}
+ 
++	d.logger.Warning(">>>>>>", m.GetAliveMsg().Membership.Endpoint, string(pkiID))
++
+ 	d.lock.RLock()
+ 	lastAliveTS, isAlive = d.aliveLastTS[string(pkiID)]
+ 	d.lock.RUnlock()
+@@ -450,6 +452,8 @@ func (d *gossipDiscoveryImpl) resurrectMember(am *proto.GossipMessage, t proto.P
+ 		d.cachedMembership.Dead = append(d.cachedMembership.Dead[:i], d.cachedMembership.Dead[i+1:]...)
+ 	}
+ 
++	d.logger.Warning(">>>>>", string(am.GetAliveMsg().Membership.PkiID))
++
+ 	if util.IndexInSlice(d.cachedMembership.Alive, am, samePKIidAliveMessage) == -1 {
+ 		d.cachedMembership.Alive = append(d.cachedMembership.Alive, am)
+ 	}
+@@ -670,10 +674,10 @@ func (d *gossipDiscoveryImpl) learnExistingMembers(aliveArr []*proto.GossipMessa
+ 
+ 			i := util.IndexInSlice(d.cachedMembership.Alive, m, samePKIidAliveMessage)
+ 			if i == -1 {
+-				d.logger.Debug("Appended", am, "to d.cachedMembership.Alive")
++				d.logger.Warning(">>>> Appended", am, "to d.cachedMembership.Alive", string(am.Membership.PkiID))
+ 				d.cachedMembership.Alive = append(d.cachedMembership.Alive, m)
+ 			} else {
+-				d.logger.Debug("Replaced", am, "in d.cachedMembership.Alive")
++				d.logger.Warning(">>>> Replaced", am, "in d.cachedMembership.Alive", string(am.Membership.PkiID))
+ 				d.cachedMembership.Alive[i] = m
+ 			}
+ 		}
+@@ -698,7 +702,7 @@ func (d *gossipDiscoveryImpl) learnNewMembers(aliveMembers []*proto.GossipMessag
+ 		}
+ 
+ 		d.cachedMembership.Alive = append(d.cachedMembership.Alive, am)
+-		d.logger.Infof("Learned about a new alive member: %v", am)
++		d.logger.Warning(">>>>> Learned about a new alive member: %v", am, string(am.GetAliveMsg().Membership.PkiID))
+ 	}
+ 
+ 	for _, dm := range deadMembers {
+diff --git a/gossip/util/logging.go b/gossip/util/logging.go
+index 34acd83..9e83d66 100644
+--- a/gossip/util/logging.go
++++ b/gossip/util/logging.go
+@@ -41,7 +41,7 @@ const (
+ )
+ 
+ var loggersByModules = make(map[string]*Logger)
+-var defaultLevel = logging.WARNING
++var defaultLevel = logging.DEBUG
+ var lock = sync.Mutex{}
+ 
+ var format = logging.MustStringFormatter(

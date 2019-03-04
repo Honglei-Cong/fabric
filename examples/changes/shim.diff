@@ -1,0 +1,223 @@
+diff --git a/core/chaincode/shim/chaincode.go b/core/chaincode/shim/chaincode.go
+index 0c9ca75..09d805a 100644
+--- a/core/chaincode/shim/chaincode.go
++++ b/core/chaincode/shim/chaincode.go
+@@ -19,6 +19,8 @@ limitations under the License.
+ package shim
+ 
+ import (
++	"crypto/x509"
++	"encoding/pem"
+ 	"errors"
+ 	"flag"
+ 	"fmt"
+@@ -34,6 +36,7 @@ import (
+ 	commonledger "github.com/hyperledger/fabric/common/ledger"
+ 	"github.com/hyperledger/fabric/core/comm"
+ 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
++	pbmsp "github.com/hyperledger/fabric/protos/msp"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
+ 	"github.com/hyperledger/fabric/protos/utils"
+ 	"github.com/op/go-logging"
+@@ -686,10 +689,30 @@ func (stub *ChaincodeStub) GetFunctionAndParameters() (function string, params [
+ 	return
+ }
+ 
+-// GetCreator returns SignatureHeader.Creator of the signedProposal
++// GetCreatorID returns MSPID of the creator of the signedProposal
+ // this Stub refers to.
+-func (stub *ChaincodeStub) GetCreator() ([]byte, error) {
+-	return stub.creator, nil
++func (stub *ChaincodeStub) GetCreatorID() (string, error) {
++	sid := &pbmsp.SerializedIdentity{}
++	if err := proto.Unmarshal(stub.creator, sid); err != nil {
++		return "", err
++	}
++
++	return sid.Mspid, nil
++}
++
++// GetCreatorCert returns Cert of the Creator of the signedProposal
++// this Stub refers to.
++func (stub *ChaincodeStub) GetCreatorCert() (*x509.Certificate, error) {
++	sid := &pbmsp.SerializedIdentity{}
++	if err := proto.Unmarshal(stub.creator, sid); err != nil {
++		return nil, err
++	}
++
++	p, _ := pem.Decode(sid.IdBytes)
++	if p != nil {
++		return x509.ParseCertificate(p.Bytes)
++	}
++	return nil, errors.New("Cert decoding failed")
+ }
+ 
+ // GetTransient returns the ChaincodeProposalPayload.transient field.
+diff --git a/core/chaincode/shim/interfaces.go b/core/chaincode/shim/interfaces.go
+index f6c67ec..16f574a 100644
+--- a/core/chaincode/shim/interfaces.go
++++ b/core/chaincode/shim/interfaces.go
+@@ -17,8 +17,9 @@ limitations under the License.
+ package shim
+ 
+ import (
+-	"github.com/golang/protobuf/ptypes/timestamp"
++	"crypto/x509"
+ 
++	"github.com/golang/protobuf/ptypes/timestamp"
+ 	"github.com/hyperledger/fabric/protos/ledger/queryresult"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
+ )
+@@ -102,9 +103,13 @@ type ChaincodeStubInterface interface {
+ 	// key values across time. GetHistoryForKey is intended to be used for read-only queries.
+ 	GetHistoryForKey(key string) (HistoryQueryIteratorInterface, error)
+ 
+-	// GetCreator returns SignatureHeader.Creator of the signedProposal
++	// GetCreatorID returns ID of the Creator of the signedProposal
++	// this Stub refers to.
++	GetCreatorID() (string, error)
++
++	// GetCreatorCert returns x509 Cert of the Creator of the signedProposal
+ 	// this Stub refers to.
+-	GetCreator() ([]byte, error)
++	GetCreatorCert() (*x509.Certificate, error)
+ 
+ 	// GetTransient returns the ChaincodeProposalPayload.transient field.
+ 	// It is a map that contains data (e.g. cryptographic material)
+diff --git a/core/chaincode/shim/mockstub.go b/core/chaincode/shim/mockstub.go
+index 440da7a..fadbeb2 100644
+--- a/core/chaincode/shim/mockstub.go
++++ b/core/chaincode/shim/mockstub.go
+@@ -20,6 +20,7 @@ package shim
+ 
+ import (
+ 	"container/list"
++	"crypto/x509"
+ 	"errors"
+ 	"fmt"
+ 	"strings"
+@@ -278,8 +279,13 @@ func (stub *MockStub) InvokeChaincode(chaincodeName string, args [][]byte, chann
+ }
+ 
+ // Not implemented
+-func (stub *MockStub) GetCreator() ([]byte, error) {
+-	return nil, nil
++func (stub *MockStub) GetCreatorID() (string, error) {
++	return "", errors.New("Not implemented")
++}
++
++// Not implemented
++func (stub *MockStub) GetCreatorCert() (*x509.Certificate, error) {
++	return nil, errors.New("Not implemented")
+ }
+ 
+ // Not implemented
+diff --git a/core/chaincode/shim/mockstub_test.go b/core/chaincode/shim/mockstub_test.go
+index 6f511da..03a4b73 100644
+--- a/core/chaincode/shim/mockstub_test.go
++++ b/core/chaincode/shim/mockstub_test.go
+@@ -257,7 +257,8 @@ func TestMockMock(t *testing.T) {
+ 	stub2 := NewMockStub("othercc", &shimTestCC{})
+ 	stub.MockPeerChaincode("othercc/mychan", stub2)
+ 	stub.InvokeChaincode("othercc", nil, "mychan")
+-	stub.GetCreator()
++	stub.GetCreatorID()
++	stub.GetCreatorCert()
+ 	stub.GetTransient()
+ 	stub.GetBinding()
+ 	stub.GetSignedProposal()
+diff --git a/core/chaincode/shim/shim_test.go b/core/chaincode/shim/shim_test.go
+index 6aae2c1..71ecf31 100644
+--- a/core/chaincode/shim/shim_test.go
++++ b/core/chaincode/shim/shim_test.go
+@@ -18,24 +18,44 @@ package shim
+ 
+ import (
+ 	"bytes"
++	"crypto/x509"
++	"fmt"
+ 	"os"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/hyperledger/fabric/common/flogging"
+ 	mockpeer "github.com/hyperledger/fabric/common/mocks/peer"
+ 	"github.com/hyperledger/fabric/common/util"
++	mspmgmt "github.com/hyperledger/fabric/msp/mgmt"
++	"github.com/hyperledger/fabric/msp/mgmt/testtools"
++	pcommon "github.com/hyperledger/fabric/protos/common"
+ 	lproto "github.com/hyperledger/fabric/protos/ledger/queryresult"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
+ 	"github.com/hyperledger/fabric/protos/utils"
+-
+-	"github.com/hyperledger/fabric/common/flogging"
++	putils "github.com/hyperledger/fabric/protos/utils"
+ 	"github.com/op/go-logging"
+ 	"github.com/spf13/viper"
+ 	"github.com/stretchr/testify/assert"
+ )
+ 
++var once sync.Once
++
++// InitMSP init MSP
++func InitMSP() {
++	once.Do(initMSP)
++}
++
++func initMSP() {
++	err := msptesttools.LoadMSPSetupForTesting()
++	if err != nil {
++		panic(fmt.Errorf("Fatal error when reading MSP config: %s\n", err))
++	}
++}
++
+ // shimTestCC example simple Chaincode implementation
+ type shimTestCC struct {
+ }
+@@ -898,3 +918,43 @@ func TestCC2CC(t *testing.T) {
+ 	time.Sleep(1 * time.Second)
+ 	peerSide.Quit()
+ }
++
++func Test_ShimGetCreator(t *testing.T) {
++	InitMSP()
++
++	signer, err := mspmgmt.GetLocalMSP().GetDefaultSigningIdentity()
++	assert.NoError(t, err)
++
++	cID := "test_channel"
++	spec := &pb.ChaincodeSpec{
++		Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_GOLANG),
++		ChaincodeId: &pb.ChaincodeID{Path: "test-chaincode-path", Name: "test-cc-name", Version: "test-ver"},
++		Input:       &pb.ChaincodeInput{},
++	}
++
++	invocation := &pb.ChaincodeInvocationSpec{ChaincodeSpec: spec}
++	creatorBytes, err := signer.Serialize()
++	assert.NoError(t, err)
++
++	prop, _, err := putils.CreateProposalFromCIS(pcommon.HeaderType_ENDORSER_TRANSACTION, cID, invocation, creatorBytes)
++	signedProp, err := putils.GetSignedProposal(prop, signer)
++
++	stub := &ChaincodeStub{}
++	err = stub.init(nil, "", &pb.ChaincodeInput{Args: [][]byte{}}, signedProp)
++	assert.NoError(t, err)
++
++	// verify creator
++	creatorID, err := stub.GetCreatorID()
++	assert.NoError(t, err)
++	assert.Equal(t, creatorID, signer.GetMSPIdentifier())
++
++	// verify cert
++	creatorCert, err := stub.GetCreatorCert()
++	assert.NoError(t, err)
++
++	msg := []byte("test-msg")
++	sig, err := signer.Sign(msg)
++	assert.NoError(t, err)
++	err = creatorCert.CheckSignature(x509.ECDSAWithSHA256, msg, sig)
++	assert.NoError(t, err)
++}

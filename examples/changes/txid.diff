@@ -1,0 +1,45 @@
+diff --git a/common/ledger/blkstorage/fsblkstorage/blockfile_mgr_test.go b/common/ledger/blkstorage/fsblkstorage/blockfile_mgr_test.go
+index 57add6a..061f721 100644
+--- a/common/ledger/blkstorage/fsblkstorage/blockfile_mgr_test.go
++++ b/common/ledger/blkstorage/fsblkstorage/blockfile_mgr_test.go
+@@ -166,7 +166,7 @@ func TestBlockfileMgrGetTxByBlockNumTranNum(t *testing.T) {
+ 	for blockIndex, blk := range blocks {
+ 		for tranIndex, txEnvelopeBytes := range blk.Data.Data {
+ 			// blockNum starts with 1, tranNum starts with 1
+-			txEnvelopeFromFileMgr, err := blkfileMgrWrapper.blockfileMgr.retrieveTransactionByBlockNumTranNum(uint64(blockIndex), uint64(tranIndex+1))
++			txEnvelopeFromFileMgr, err := blkfileMgrWrapper.blockfileMgr.retrieveTransactionByBlockNumTranNum(uint64(blockIndex), uint64(tranIndex))
+ 			testutil.AssertNoError(t, err, "Error while retrieving tx from blkfileMgr")
+ 			txEnvelope, err := putil.GetEnvelopeFromBlock(txEnvelopeBytes)
+ 			testutil.AssertNoError(t, err, "Error while unmarshalling tx")
+diff --git a/common/ledger/blkstorage/fsblkstorage/blockindex.go b/common/ledger/blkstorage/fsblkstorage/blockindex.go
+index 61d9fdb..b4e1057 100644
+--- a/common/ledger/blkstorage/fsblkstorage/blockindex.go
++++ b/common/ledger/blkstorage/fsblkstorage/blockindex.go
+@@ -132,12 +132,12 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
+ 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockNumTranNum]; ok {
+ 		for txIterator, txoffset := range txOffsets {
+ 			txFlp := newFileLocationPointer(flp.fileSuffixNum, flp.offset, txoffset.loc)
+-			logger.Debugf("Adding txLoc [%s] for tx number:[%d] ID: [%s] to blockNumTranNum index", txFlp, txIterator+1, txoffset.txID)
++			logger.Debugf("Adding txLoc [%s] for tx number:[%d] ID: [%s] to blockNumTranNum index", txFlp, txIterator, txoffset.txID)
+ 			txFlpBytes, marshalErr := txFlp.marshal()
+ 			if marshalErr != nil {
+ 				return marshalErr
+ 			}
+-			batch.Put(constructBlockNumTranNumKey(blockIdxInfo.blockNum, uint64(txIterator+1)), txFlpBytes)
++			batch.Put(constructBlockNumTranNumKey(blockIdxInfo.blockNum, uint64(txIterator)), txFlpBytes)
+ 		}
+ 	}
+ 
+diff --git a/common/ledger/blkstorage/fsblkstorage/blockindex_test.go b/common/ledger/blkstorage/fsblkstorage/blockindex_test.go
+index 99703dc..a52bb62 100644
+--- a/common/ledger/blkstorage/fsblkstorage/blockindex_test.go
++++ b/common/ledger/blkstorage/fsblkstorage/blockindex_test.go
+@@ -179,7 +179,7 @@ func testBlockIndexSelectiveIndexing(t *testing.T, indexItems []blkstorage.Index
+ 		}
+ 
+ 		//test 'retrieveTrasnactionsByBlockNumTranNum
+-		txEnvelope2, err := blockfileMgr.retrieveTransactionByBlockNumTranNum(0, 1)
++		txEnvelope2, err := blockfileMgr.retrieveTransactionByBlockNumTranNum(0, 0)
+ 		if testutil.Contains(indexItems, blkstorage.IndexableAttrBlockNumTranNum) {
+ 			testutil.AssertNoError(t, err, "Error while retrieving tx by blockNum and tranNum")
+ 			txEnvelopeBytes2 := blocks[0].Data.Data[0]

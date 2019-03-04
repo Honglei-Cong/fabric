@@ -1,0 +1,4076 @@
+diff --git a/core/chaincode/shim/javascript/handler.go b/core/chaincode/shim/javascript/handler.go
+new file mode 100644
+index 0000000..e1eaa77
+--- /dev/null
++++ b/core/chaincode/shim/javascript/handler.go
+@@ -0,0 +1,165 @@
++package javascript
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"sync"
++
++	"github.com/golang/protobuf/proto"
++	"github.com/hyperledger/fabric/common/flogging"
++	pb "github.com/hyperledger/fabric/protos/peer"
++)
++
++var logger = flogging.MustGetLogger("jscontainer")
++
++type Handler struct {
++	sync.RWMutex
++	ChatStream       ContainerStream
++	ContainerSupport *JSContainerServer
++}
++
++func HandleContainerStream(jsContainer *JSContainerServer, ctxt context.Context, stream ContainerStream) error {
++	deadline, ok := ctxt.Deadline()
++	logger.Debugf("Current context deadline = %s, ok = %v", deadline, ok)
++	handler := newContainerSupportHandler(jsContainer, stream)
++	return handler.processStream()
++}
++
++func newContainerSupportHandler(jsContainer *JSContainerServer, peerChatStream ContainerStream) *Handler {
++	v := &Handler{
++		ChatStream:       peerChatStream,
++		ContainerSupport: jsContainer,
++	}
++
++	return v
++}
++
++func (handler *Handler) deregister() error {
++	return nil
++}
++
++func (handler *Handler) processStream() error {
++	defer handler.deregister()
++	msgAvail := make(chan *pb.ContainerMessage)
++	var in *pb.ContainerMessage
++	recv := true
++	var err error
++
++	errc := make(chan error, 1)
++	for {
++		if recv {
++			recv = false
++			go func() {
++				var in2 *pb.ContainerMessage
++				in2, err = handler.ChatStream.Recv()
++				msgAvail <- in2
++			}()
++		}
++		select {
++		case sendErr := <-errc:
++			if sendErr != nil {
++				return sendErr
++			}
++			continue
++		case in = <-msgAvail:
++			if err == io.EOF {
++				logger.Debugf("Received EOF, end jscontainer support stream, %s", err)
++				return err
++			} else if err != nil {
++				logger.Errorf("Error handling jscontainer support stream: %s", err)
++				return err
++			} else if in == nil {
++				err = fmt.Errorf("Received nil msg, ending jscontainer stream")
++				return err
++			}
++
++			if in.Type.String() == pb.ContainerMessage_ERROR.String() {
++				logger.Errorf("Got error: %s", string(in.Payload))
++			}
++
++			recv = true
++		}
++
++		err = handler.HandleMessage(in)
++		if err != nil {
++			logger.Errorf("Error handling message, ending stream: %s", err)
++			return fmt.Errorf("Error handling message, ending stream: %s", err)
++		}
++	}
++}
++
++func (handler *Handler) HandleMessage(msg *pb.ContainerMessage) error {
++	handler.Lock()
++	defer handler.Unlock()
++
++	if msg.Type.String() == pb.ContainerMessage_BUILD_IMAGE.String() {
++		buildImage := &pb.BuildImageReq{}
++		err := proto.Unmarshal(msg.Payload, buildImage)
++		if err != nil {
++			logger.Errorf("failed to decode build image payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.buildImage(buildImage)
++
++	} else if msg.Type.String() == pb.ContainerMessage_CREATE_CONTAINER.String() {
++		createContainer := &pb.CreateContainerReq{}
++		err := proto.Unmarshal(msg.Payload, createContainer)
++		if err != nil {
++			logger.Errorf("failed to decode create container payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.createContainer(createContainer)
++
++	} else if msg.Type.String() == pb.ContainerMessage_START_CONTAINER.String() {
++		startContainer := &pb.StartContainerReq{}
++		err := proto.Unmarshal(msg.Payload, startContainer)
++		if err != nil {
++			logger.Errorf("failed to decode start container payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.startContainer(startContainer)
++
++	} else if msg.Type.String() == pb.ContainerMessage_ATTACH_TO_CONTAINER.String() {
++
++		return fmt.Errorf("AttachToContainer Not Supported")
++
++	} else if msg.Type.String() == pb.ContainerMessage_STOP_CONTAINER.String() {
++		stopContainer := &pb.StopContainerReq{}
++		err := proto.Unmarshal(msg.Payload, stopContainer)
++		if err != nil {
++			logger.Errorf("failed to decode stop container payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.stopContainer(stopContainer)
++
++	} else if msg.Type.String() == pb.ContainerMessage_KILL_CONTAINER.String() {
++		killContainer := &pb.KillContainerReq{}
++		err := proto.Unmarshal(msg.Payload, killContainer)
++		if err != nil {
++			logger.Errorf("failed to decode kill container payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.killContainer(killContainer)
++
++	} else if msg.Type.String() == pb.ContainerMessage_REMOVE_CONTAINER.String() {
++		removeContainer := &pb.RemoveContainerReq{}
++		err := proto.Unmarshal(msg.Payload, removeContainer)
++		if err != nil {
++			logger.Errorf("failed to decode remove container payload, sending %s", pb.ContainerMessage_ERROR)
++			return err
++		}
++
++		return handler.ContainerSupport.removeContainer(removeContainer)
++
++	} else if msg.Type.String() == pb.ContainerMessage_REMOVE_IMAGE_EXTENDED.String() {
++
++	}
++
++	return nil
++}
+diff --git a/core/chaincode/shim/javascript/jscontainer.go b/core/chaincode/shim/javascript/jscontainer.go
+new file mode 100644
+index 0000000..d87058f
+--- /dev/null
++++ b/core/chaincode/shim/javascript/jscontainer.go
+@@ -0,0 +1,55 @@
++package javascript
++
++import (
++	pb "github.com/hyperledger/fabric/protos/peer"
++	"golang.org/x/net/context"
++)
++
++type JSContainerServer struct {
++	ChaincodeData []byte
++}
++
++func NewJSServer() *pb.ContainerSupportServer {
++	j := new(JSContainerServer)
++
++	return j
++}
++
++// ChaincodeStream interface for stream between Peer and chaincode instance.
++type ContainerStream interface {
++	Send(*pb.ContainerMessage) error
++	Recv() (*pb.ContainerMessage, error)
++}
++
++
++func (jsContainer *JSContainerServer) HandleContainerStream(ctxt context.Context, stream ContainerStream) error {
++	return HandleContainerStream(jsContainer, ctxt, stream)
++}
++
++func (jsContainer *JSContainerServer) Register(stream pb.ContainerSupport_RegisterServer) error {
++	return jsContainer.HandleContainerStream(stream.Context(), stream)
++}
++
++func (jsContainer *JSContainerServer) buildImage(buildReq *pb.BuildImageReq) error {
++	return nil
++}
++
++func (jsContainer *JSContainerServer) createContainer(createReq *pb.CreateContainerReq) error {
++	return nil
++}
++
++func (jsContainer *JSContainerServer) startContainer(startReq *pb.StartContainerReq) error {
++	return nil
++}
++
++func (jsContainer *JSContainerServer) stopContainer(stopReq *pb.StopContainerReq) error {
++	return nil
++}
++
++func (jsContainer *JSContainerServer) killContainer(killReq *pb.KillContainerReq) error {
++	return nil
++}
++
++func (jsContainer *JSContainerServer) removeContainer(removeReq *pb.RemoveContainerReq) error {
++	return nil
++}
+\ No newline at end of file
+diff --git a/core/chaincode/shim/javascript/jscontainer_test.go b/core/chaincode/shim/javascript/jscontainer_test.go
+new file mode 100644
+index 0000000..e6a2ee3
+--- /dev/null
++++ b/core/chaincode/shim/javascript/jscontainer_test.go
+@@ -0,0 +1 @@
++package javascript
+diff --git a/core/chaincode/shim/javascript/jsshim.go b/core/chaincode/shim/javascript/jsshim.go
+new file mode 100644
+index 0000000..e6a2ee3
+--- /dev/null
++++ b/core/chaincode/shim/javascript/jsshim.go
+@@ -0,0 +1 @@
++package javascript
+diff --git a/core/chaincode/shim/javascript/jsshim_test.go b/core/chaincode/shim/javascript/jsshim_test.go
+new file mode 100644
+index 0000000..e6a2ee3
+--- /dev/null
++++ b/core/chaincode/shim/javascript/jsshim_test.go
+@@ -0,0 +1 @@
++package javascript
+diff --git a/core/chaincode/shim/javascript/main.go b/core/chaincode/shim/javascript/main.go
+new file mode 100644
+index 0000000..904201a
+--- /dev/null
++++ b/core/chaincode/shim/javascript/main.go
+@@ -0,0 +1,33 @@
++package javascript
++
++import (
++	"fmt"
++
++	"github.com/hyperledger/fabric/core/comm"
++	pb "github.com/hyperledger/fabric/protos/peer"
++	"github.com/spf13/viper"
++)
++
++func main() {
++	listenAddress := viper.GetString("peer.jscontainer.listenAddress")
++	secureConfig := comm.SecureServerConfig{
++		UseTLS: false,
++	}
++	grpcServer, err := comm.NewGRPCServer(listenAddress, secureConfig)
++	if err != nil {
++		panic(err)
++	}
++
++	jsContainer := NewJSServer()
++	pb.RegisterContainerSupportServer(grpcServer, jsContainer)
++
++	serve := make(chan error)
++	go func() {
++		var grpcErr error
++		if grpcErr = grpcServer.Start(); grpcErr != nil {
++			grpcErr = fmt.Errorf("js server exited with error: %s", grpcErr)
++		}
++		serve <- grpcErr
++	}()
++	<-serve
++}
+diff --git a/core/comm/testdata/grpc/test.pb.go b/core/comm/testdata/grpc/test.pb.go
+index 566e8d1..e4e5969 100644
+--- a/core/comm/testdata/grpc/test.pb.go
++++ b/core/comm/testdata/grpc/test.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: test.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package grpc is a generated protocol buffer package.
+@@ -50,7 +51,7 @@ var _ grpc1.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc1.SupportPackageIsVersion4
++const _ = grpc1.SupportPackageIsVersion3
+ 
+ // Client API for TestService service
+ 
+@@ -113,7 +114,7 @@ var _TestService_serviceDesc = grpc1.ServiceDesc{
+ 		},
+ 	},
+ 	Streams:  []grpc1.StreamDesc{},
+-	Metadata: "test.proto",
++	Metadata: fileDescriptor0,
+ }
+ 
+ func init() { proto.RegisterFile("test.proto", fileDescriptor0) }
+diff --git a/protos/common/common.pb.go b/protos/common/common.pb.go
+index 81d4bcb..25bcaf8 100644
+--- a/protos/common/common.pb.go
++++ b/protos/common/common.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: common/common.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package common is a generated protocol buffer package.
+@@ -177,13 +178,6 @@ func (m *LastConfig) String() string            { return proto.CompactTextString
+ func (*LastConfig) ProtoMessage()               {}
+ func (*LastConfig) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *LastConfig) GetIndex() uint64 {
+-	if m != nil {
+-		return m.Index
+-	}
+-	return 0
+-}
+-
+ // Metadata is a common structure to be used to encode block metadata
+ type Metadata struct {
+ 	Value      []byte               `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+@@ -195,13 +189,6 @@ func (m *Metadata) String() string            { return proto.CompactTextString(m
+ func (*Metadata) ProtoMessage()               {}
+ func (*Metadata) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *Metadata) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+ func (m *Metadata) GetSignatures() []*MetadataSignature {
+ 	if m != nil {
+ 		return m.Signatures
+@@ -219,20 +206,6 @@ func (m *MetadataSignature) String() string            { return proto.CompactTex
+ func (*MetadataSignature) ProtoMessage()               {}
+ func (*MetadataSignature) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+ 
+-func (m *MetadataSignature) GetSignatureHeader() []byte {
+-	if m != nil {
+-		return m.SignatureHeader
+-	}
+-	return nil
+-}
+-
+-func (m *MetadataSignature) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+ type Header struct {
+ 	ChannelHeader   []byte `protobuf:"bytes,1,opt,name=channel_header,json=channelHeader,proto3" json:"channel_header,omitempty"`
+ 	SignatureHeader []byte `protobuf:"bytes,2,opt,name=signature_header,json=signatureHeader,proto3" json:"signature_header,omitempty"`
+@@ -243,20 +216,6 @@ func (m *Header) String() string            { return proto.CompactTextString(m)
+ func (*Header) ProtoMessage()               {}
+ func (*Header) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+ 
+-func (m *Header) GetChannelHeader() []byte {
+-	if m != nil {
+-		return m.ChannelHeader
+-	}
+-	return nil
+-}
+-
+-func (m *Header) GetSignatureHeader() []byte {
+-	if m != nil {
+-		return m.SignatureHeader
+-	}
+-	return nil
+-}
+-
+ // Header is a generic replay prevention and identity message to include in a signed payload
+ type ChannelHeader struct {
+ 	Type int32 `protobuf:"varint,1,opt,name=type" json:"type,omitempty"`
+@@ -291,20 +250,6 @@ func (m *ChannelHeader) String() string            { return proto.CompactTextStr
+ func (*ChannelHeader) ProtoMessage()               {}
+ func (*ChannelHeader) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+ 
+-func (m *ChannelHeader) GetType() int32 {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return 0
+-}
+-
+-func (m *ChannelHeader) GetVersion() int32 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
+-
+ func (m *ChannelHeader) GetTimestamp() *google_protobuf.Timestamp {
+ 	if m != nil {
+ 		return m.Timestamp
+@@ -312,34 +257,6 @@ func (m *ChannelHeader) GetTimestamp() *google_protobuf.Timestamp {
+ 	return nil
+ }
+ 
+-func (m *ChannelHeader) GetChannelId() string {
+-	if m != nil {
+-		return m.ChannelId
+-	}
+-	return ""
+-}
+-
+-func (m *ChannelHeader) GetTxId() string {
+-	if m != nil {
+-		return m.TxId
+-	}
+-	return ""
+-}
+-
+-func (m *ChannelHeader) GetEpoch() uint64 {
+-	if m != nil {
+-		return m.Epoch
+-	}
+-	return 0
+-}
+-
+-func (m *ChannelHeader) GetExtension() []byte {
+-	if m != nil {
+-		return m.Extension
+-	}
+-	return nil
+-}
+-
+ type SignatureHeader struct {
+ 	// Creator of the message, specified as a certificate chain
+ 	Creator []byte `protobuf:"bytes,1,opt,name=creator,proto3" json:"creator,omitempty"`
+@@ -352,20 +269,6 @@ func (m *SignatureHeader) String() string            { return proto.CompactTextS
+ func (*SignatureHeader) ProtoMessage()               {}
+ func (*SignatureHeader) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{5} }
+ 
+-func (m *SignatureHeader) GetCreator() []byte {
+-	if m != nil {
+-		return m.Creator
+-	}
+-	return nil
+-}
+-
+-func (m *SignatureHeader) GetNonce() []byte {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return nil
+-}
+-
+ // Payload is the message contents (and header to allow for signing)
+ type Payload struct {
+ 	// Header is included to provide identity and prevent replay
+@@ -386,13 +289,6 @@ func (m *Payload) GetHeader() *Header {
+ 	return nil
+ }
+ 
+-func (m *Payload) GetData() []byte {
+-	if m != nil {
+-		return m.Data
+-	}
+-	return nil
+-}
+-
+ // Envelope wraps a Payload with a signature so that the message may be authenticated
+ type Envelope struct {
+ 	// A marshaled Payload
+@@ -406,20 +302,6 @@ func (m *Envelope) String() string            { return proto.CompactTextString(m
+ func (*Envelope) ProtoMessage()               {}
+ func (*Envelope) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+ 
+-func (m *Envelope) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+-func (m *Envelope) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+ // This is finalized block structure to be shared among the orderer and peer
+ // Note that the BlockHeader chains to the previous BlockHeader, and the BlockData hash is embedded
+ // in the BlockHeader.  This makes it natural and obvious that the Data is included in the hash, but
+@@ -470,27 +352,6 @@ func (m *BlockHeader) String() string            { return proto.CompactTextStrin
+ func (*BlockHeader) ProtoMessage()               {}
+ func (*BlockHeader) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+ 
+-func (m *BlockHeader) GetNumber() uint64 {
+-	if m != nil {
+-		return m.Number
+-	}
+-	return 0
+-}
+-
+-func (m *BlockHeader) GetPreviousHash() []byte {
+-	if m != nil {
+-		return m.PreviousHash
+-	}
+-	return nil
+-}
+-
+-func (m *BlockHeader) GetDataHash() []byte {
+-	if m != nil {
+-		return m.DataHash
+-	}
+-	return nil
+-}
+-
+ type BlockData struct {
+ 	Data [][]byte `protobuf:"bytes,1,rep,name=data,proto3" json:"data,omitempty"`
+ }
+@@ -500,13 +361,6 @@ func (m *BlockData) String() string            { return proto.CompactTextString(
+ func (*BlockData) ProtoMessage()               {}
+ func (*BlockData) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+ 
+-func (m *BlockData) GetData() [][]byte {
+-	if m != nil {
+-		return m.Data
+-	}
+-	return nil
+-}
+-
+ type BlockMetadata struct {
+ 	Metadata [][]byte `protobuf:"bytes,1,rep,name=metadata,proto3" json:"metadata,omitempty"`
+ }
+@@ -516,13 +370,6 @@ func (m *BlockMetadata) String() string            { return proto.CompactTextStr
+ func (*BlockMetadata) ProtoMessage()               {}
+ func (*BlockMetadata) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+ 
+-func (m *BlockMetadata) GetMetadata() [][]byte {
+-	if m != nil {
+-		return m.Metadata
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*LastConfig)(nil), "common.LastConfig")
+ 	proto.RegisterType((*Metadata)(nil), "common.Metadata")
+diff --git a/protos/common/configtx.pb.go b/protos/common/configtx.pb.go
+index c48240b..4aa9b6d 100644
+--- a/protos/common/configtx.pb.go
++++ b/protos/common/configtx.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: common/configtx.proto
++// DO NOT EDIT!
+ 
+ package common
+ 
+@@ -116,13 +117,6 @@ func (m *Config) String() string            { return proto.CompactTextString(m)
+ func (*Config) ProtoMessage()               {}
+ func (*Config) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{4} }
+ 
+-func (m *Config) GetSequence() uint64 {
+-	if m != nil {
+-		return m.Sequence
+-	}
+-	return 0
+-}
+-
+ func (m *Config) GetChannelGroup() *ConfigGroup {
+ 	if m != nil {
+ 		return m.ChannelGroup
+@@ -140,13 +134,6 @@ func (m *ConfigUpdateEnvelope) String() string            { return proto.Compact
+ func (*ConfigUpdateEnvelope) ProtoMessage()               {}
+ func (*ConfigUpdateEnvelope) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{5} }
+ 
+-func (m *ConfigUpdateEnvelope) GetConfigUpdate() []byte {
+-	if m != nil {
+-		return m.ConfigUpdate
+-	}
+-	return nil
+-}
+-
+ func (m *ConfigUpdateEnvelope) GetSignatures() []*ConfigSignature {
+ 	if m != nil {
+ 		return m.Signatures
+@@ -174,13 +161,6 @@ func (m *ConfigUpdate) String() string            { return proto.CompactTextStri
+ func (*ConfigUpdate) ProtoMessage()               {}
+ func (*ConfigUpdate) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{6} }
+ 
+-func (m *ConfigUpdate) GetChannelId() string {
+-	if m != nil {
+-		return m.ChannelId
+-	}
+-	return ""
+-}
+-
+ func (m *ConfigUpdate) GetReadSet() *ConfigGroup {
+ 	if m != nil {
+ 		return m.ReadSet
+@@ -209,13 +189,6 @@ func (m *ConfigGroup) String() string            { return proto.CompactTextStrin
+ func (*ConfigGroup) ProtoMessage()               {}
+ func (*ConfigGroup) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{7} }
+ 
+-func (m *ConfigGroup) GetVersion() uint64 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
+-
+ func (m *ConfigGroup) GetGroups() map[string]*ConfigGroup {
+ 	if m != nil {
+ 		return m.Groups
+@@ -237,13 +210,6 @@ func (m *ConfigGroup) GetPolicies() map[string]*ConfigPolicy {
+ 	return nil
+ }
+ 
+-func (m *ConfigGroup) GetModPolicy() string {
+-	if m != nil {
+-		return m.ModPolicy
+-	}
+-	return ""
+-}
+-
+ // ConfigValue represents an individual piece of config data
+ type ConfigValue struct {
+ 	Version   uint64 `protobuf:"varint,1,opt,name=version" json:"version,omitempty"`
+@@ -256,27 +222,6 @@ func (m *ConfigValue) String() string            { return proto.CompactTextStrin
+ func (*ConfigValue) ProtoMessage()               {}
+ func (*ConfigValue) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{8} }
+ 
+-func (m *ConfigValue) GetVersion() uint64 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
+-
+-func (m *ConfigValue) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+-func (m *ConfigValue) GetModPolicy() string {
+-	if m != nil {
+-		return m.ModPolicy
+-	}
+-	return ""
+-}
+-
+ type ConfigPolicy struct {
+ 	Version   uint64  `protobuf:"varint,1,opt,name=version" json:"version,omitempty"`
+ 	Policy    *Policy `protobuf:"bytes,2,opt,name=policy" json:"policy,omitempty"`
+@@ -288,13 +233,6 @@ func (m *ConfigPolicy) String() string            { return proto.CompactTextStri
+ func (*ConfigPolicy) ProtoMessage()               {}
+ func (*ConfigPolicy) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{9} }
+ 
+-func (m *ConfigPolicy) GetVersion() uint64 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
+-
+ func (m *ConfigPolicy) GetPolicy() *Policy {
+ 	if m != nil {
+ 		return m.Policy
+@@ -302,13 +240,6 @@ func (m *ConfigPolicy) GetPolicy() *Policy {
+ 	return nil
+ }
+ 
+-func (m *ConfigPolicy) GetModPolicy() string {
+-	if m != nil {
+-		return m.ModPolicy
+-	}
+-	return ""
+-}
+-
+ type ConfigSignature struct {
+ 	SignatureHeader []byte `protobuf:"bytes,1,opt,name=signature_header,json=signatureHeader,proto3" json:"signature_header,omitempty"`
+ 	Signature       []byte `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+@@ -319,20 +250,6 @@ func (m *ConfigSignature) String() string            { return proto.CompactTextS
+ func (*ConfigSignature) ProtoMessage()               {}
+ func (*ConfigSignature) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{10} }
+ 
+-func (m *ConfigSignature) GetSignatureHeader() []byte {
+-	if m != nil {
+-		return m.SignatureHeader
+-	}
+-	return nil
+-}
+-
+-func (m *ConfigSignature) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ConfigEnvelope)(nil), "common.ConfigEnvelope")
+ 	proto.RegisterType((*ConfigGroupSchema)(nil), "common.ConfigGroupSchema")
+diff --git a/protos/common/configuration.pb.go b/protos/common/configuration.pb.go
+index d1c859e..3694b28 100644
+--- a/protos/common/configuration.pb.go
++++ b/protos/common/configuration.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: common/configuration.proto
++// DO NOT EDIT!
+ 
+ package common
+ 
+@@ -24,13 +25,6 @@ func (m *HashingAlgorithm) String() string            { return proto.CompactText
+ func (*HashingAlgorithm) ProtoMessage()               {}
+ func (*HashingAlgorithm) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{0} }
+ 
+-func (m *HashingAlgorithm) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
+-
+ // BlockDataHashingStructure is encoded into the configuration transaction as a configuration item of
+ // type Chain with a Key of "BlockDataHashingStructure" and a Value of HashingAlgorithm as marshaled protobuf bytes
+ type BlockDataHashingStructure struct {
+@@ -44,13 +38,6 @@ func (m *BlockDataHashingStructure) String() string            { return proto.Co
+ func (*BlockDataHashingStructure) ProtoMessage()               {}
+ func (*BlockDataHashingStructure) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{1} }
+ 
+-func (m *BlockDataHashingStructure) GetWidth() uint32 {
+-	if m != nil {
+-		return m.Width
+-	}
+-	return 0
+-}
+-
+ // OrdererAddresses is encoded into the configuration transaction as a configuration item of type Chain
+ // with a Key of "OrdererAddresses" and a Value of OrdererAddresses as marshaled protobuf bytes
+ type OrdererAddresses struct {
+@@ -62,13 +49,6 @@ func (m *OrdererAddresses) String() string            { return proto.CompactText
+ func (*OrdererAddresses) ProtoMessage()               {}
+ func (*OrdererAddresses) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{2} }
+ 
+-func (m *OrdererAddresses) GetAddresses() []string {
+-	if m != nil {
+-		return m.Addresses
+-	}
+-	return nil
+-}
+-
+ // Consortium represents the consortium context in which the channel was created
+ type Consortium struct {
+ 	Name string `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
+@@ -79,13 +59,6 @@ func (m *Consortium) String() string            { return proto.CompactTextString
+ func (*Consortium) ProtoMessage()               {}
+ func (*Consortium) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{3} }
+ 
+-func (m *Consortium) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*HashingAlgorithm)(nil), "common.HashingAlgorithm")
+ 	proto.RegisterType((*BlockDataHashingStructure)(nil), "common.BlockDataHashingStructure")
+diff --git a/protos/common/ledger.pb.go b/protos/common/ledger.pb.go
+index 37e5acc..b52f548 100644
+--- a/protos/common/ledger.pb.go
++++ b/protos/common/ledger.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: common/ledger.proto
++// DO NOT EDIT!
+ 
+ package common
+ 
+@@ -25,27 +26,6 @@ func (m *BlockchainInfo) String() string            { return proto.CompactTextSt
+ func (*BlockchainInfo) ProtoMessage()               {}
+ func (*BlockchainInfo) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{0} }
+ 
+-func (m *BlockchainInfo) GetHeight() uint64 {
+-	if m != nil {
+-		return m.Height
+-	}
+-	return 0
+-}
+-
+-func (m *BlockchainInfo) GetCurrentBlockHash() []byte {
+-	if m != nil {
+-		return m.CurrentBlockHash
+-	}
+-	return nil
+-}
+-
+-func (m *BlockchainInfo) GetPreviousBlockHash() []byte {
+-	if m != nil {
+-		return m.PreviousBlockHash
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*BlockchainInfo)(nil), "common.BlockchainInfo")
+ }
+diff --git a/protos/common/policies.pb.go b/protos/common/policies.pb.go
+index f59ad73..0d3e530 100644
+--- a/protos/common/policies.pb.go
++++ b/protos/common/policies.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: common/policies.proto
++// DO NOT EDIT!
+ 
+ package common
+ 
+@@ -76,20 +77,6 @@ func (m *Policy) String() string            { return proto.CompactTextString(m)
+ func (*Policy) ProtoMessage()               {}
+ func (*Policy) Descriptor() ([]byte, []int) { return fileDescriptor4, []int{0} }
+ 
+-func (m *Policy) GetType() int32 {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return 0
+-}
+-
+-func (m *Policy) GetPolicy() []byte {
+-	if m != nil {
+-		return m.Policy
+-	}
+-	return nil
+-}
+-
+ // SignaturePolicyEnvelope wraps a SignaturePolicy and includes a version for future enhancements
+ type SignaturePolicyEnvelope struct {
+ 	Version    int32                   `protobuf:"varint,1,opt,name=version" json:"version,omitempty"`
+@@ -102,13 +89,6 @@ func (m *SignaturePolicyEnvelope) String() string            { return proto.Comp
+ func (*SignaturePolicyEnvelope) ProtoMessage()               {}
+ func (*SignaturePolicyEnvelope) Descriptor() ([]byte, []int) { return fileDescriptor4, []int{1} }
+ 
+-func (m *SignaturePolicyEnvelope) GetVersion() int32 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
+-
+ func (m *SignaturePolicyEnvelope) GetPolicy() *SignaturePolicy {
+ 	if m != nil {
+ 		return m.Policy
+@@ -255,13 +235,6 @@ func (m *SignaturePolicy_NOutOf) String() string            { return proto.Compa
+ func (*SignaturePolicy_NOutOf) ProtoMessage()               {}
+ func (*SignaturePolicy_NOutOf) Descriptor() ([]byte, []int) { return fileDescriptor4, []int{2, 0} }
+ 
+-func (m *SignaturePolicy_NOutOf) GetN() int32 {
+-	if m != nil {
+-		return m.N
+-	}
+-	return 0
+-}
+-
+ func (m *SignaturePolicy_NOutOf) GetPolicies() []*SignaturePolicy {
+ 	if m != nil {
+ 		return m.Policies
+@@ -287,20 +260,6 @@ func (m *ImplicitMetaPolicy) String() string            { return proto.CompactTe
+ func (*ImplicitMetaPolicy) ProtoMessage()               {}
+ func (*ImplicitMetaPolicy) Descriptor() ([]byte, []int) { return fileDescriptor4, []int{3} }
+ 
+-func (m *ImplicitMetaPolicy) GetSubPolicy() string {
+-	if m != nil {
+-		return m.SubPolicy
+-	}
+-	return ""
+-}
+-
+-func (m *ImplicitMetaPolicy) GetRule() ImplicitMetaPolicy_Rule {
+-	if m != nil {
+-		return m.Rule
+-	}
+-	return ImplicitMetaPolicy_ANY
+-}
+-
+ func init() {
+ 	proto.RegisterType((*Policy)(nil), "common.Policy")
+ 	proto.RegisterType((*SignaturePolicyEnvelope)(nil), "common.SignaturePolicyEnvelope")
+diff --git a/protos/gossip/message.pb.go b/protos/gossip/message.pb.go
+index 71742b0..d69f0ee 100644
+--- a/protos/gossip/message.pb.go
++++ b/protos/gossip/message.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: gossip/message.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package gossip is a generated protocol buffer package.
+@@ -127,20 +128,6 @@ func (m *Envelope) String() string            { return proto.CompactTextString(m
+ func (*Envelope) ProtoMessage()               {}
+ func (*Envelope) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *Envelope) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+-func (m *Envelope) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+ func (m *Envelope) GetSecretEnvelope() *SecretEnvelope {
+ 	if m != nil {
+ 		return m.SecretEnvelope
+@@ -163,20 +150,6 @@ func (m *SecretEnvelope) String() string            { return proto.CompactTextSt
+ func (*SecretEnvelope) ProtoMessage()               {}
+ func (*SecretEnvelope) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *SecretEnvelope) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+-func (m *SecretEnvelope) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+ // Secret is an entity that might be omitted
+ // from an Envelope when the remote peer that is receiving
+ // the Envelope shouldn't know the secret's content.
+@@ -385,27 +358,6 @@ func (m *GossipMessage) GetContent() isGossipMessage_Content {
+ 	return nil
+ }
+ 
+-func (m *GossipMessage) GetNonce() uint64 {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return 0
+-}
+-
+-func (m *GossipMessage) GetChannel() []byte {
+-	if m != nil {
+-		return m.Channel
+-	}
+-	return nil
+-}
+-
+-func (m *GossipMessage) GetTag() GossipMessage_Tag {
+-	if m != nil {
+-		return m.Tag
+-	}
+-	return GossipMessage_UNDEFINED
+-}
+-
+ func (m *GossipMessage) GetAliveMsg() *AliveMessage {
+ 	if x, ok := m.GetContent().(*GossipMessage_AliveMsg); ok {
+ 		return x.AliveMsg
+@@ -904,13 +856,6 @@ func (m *StateInfo) String() string            { return proto.CompactTextString(
+ func (*StateInfo) ProtoMessage()               {}
+ func (*StateInfo) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
+ 
+-func (m *StateInfo) GetMetadata() []byte {
+-	if m != nil {
+-		return m.Metadata
+-	}
+-	return nil
+-}
+-
+ func (m *StateInfo) GetTimestamp() *PeerTime {
+ 	if m != nil {
+ 		return m.Timestamp
+@@ -918,20 +863,6 @@ func (m *StateInfo) GetTimestamp() *PeerTime {
+ 	return nil
+ }
+ 
+-func (m *StateInfo) GetPkiId() []byte {
+-	if m != nil {
+-		return m.PkiId
+-	}
+-	return nil
+-}
+-
+-func (m *StateInfo) GetChannel_MAC() []byte {
+-	if m != nil {
+-		return m.Channel_MAC
+-	}
+-	return nil
+-}
+-
+ // StateInfoSnapshot is an aggregation of StateInfo messages
+ type StateInfoSnapshot struct {
+ 	Elements []*Envelope `protobuf:"bytes,1,rep,name=elements" json:"elements,omitempty"`
+@@ -966,13 +897,6 @@ func (m *StateInfoPullRequest) String() string            { return proto.Compact
+ func (*StateInfoPullRequest) ProtoMessage()               {}
+ func (*StateInfoPullRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+ 
+-func (m *StateInfoPullRequest) GetChannel_MAC() []byte {
+-	if m != nil {
+-		return m.Channel_MAC
+-	}
+-	return nil
+-}
+-
+ // ConnEstablish is the message used for the gossip handshake
+ // Whenever a peer connects to another peer, it handshakes
+ // with it by sending this message that proves its identity
+@@ -987,27 +911,6 @@ func (m *ConnEstablish) String() string            { return proto.CompactTextStr
+ func (*ConnEstablish) ProtoMessage()               {}
+ func (*ConnEstablish) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{7} }
+ 
+-func (m *ConnEstablish) GetPkiId() []byte {
+-	if m != nil {
+-		return m.PkiId
+-	}
+-	return nil
+-}
+-
+-func (m *ConnEstablish) GetCert() []byte {
+-	if m != nil {
+-		return m.Cert
+-	}
+-	return nil
+-}
+-
+-func (m *ConnEstablish) GetHash() []byte {
+-	if m != nil {
+-		return m.Hash
+-	}
+-	return nil
+-}
+-
+ // PeerIdentity defines the identity of the peer
+ // Used to make other peers learn of the identity
+ // of a certain peer
+@@ -1022,27 +925,6 @@ func (m *PeerIdentity) String() string            { return proto.CompactTextStri
+ func (*PeerIdentity) ProtoMessage()               {}
+ func (*PeerIdentity) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{8} }
+ 
+-func (m *PeerIdentity) GetPkiId() []byte {
+-	if m != nil {
+-		return m.PkiId
+-	}
+-	return nil
+-}
+-
+-func (m *PeerIdentity) GetCert() []byte {
+-	if m != nil {
+-		return m.Cert
+-	}
+-	return nil
+-}
+-
+-func (m *PeerIdentity) GetMetadata() []byte {
+-	if m != nil {
+-		return m.Metadata
+-	}
+-	return nil
+-}
+-
+ // DataRequest is a message used for a peer to request
+ // certain data blocks from a remote peer
+ type DataRequest struct {
+@@ -1056,27 +938,6 @@ func (m *DataRequest) String() string            { return proto.CompactTextStrin
+ func (*DataRequest) ProtoMessage()               {}
+ func (*DataRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{9} }
+ 
+-func (m *DataRequest) GetNonce() uint64 {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return 0
+-}
+-
+-func (m *DataRequest) GetDigests() []string {
+-	if m != nil {
+-		return m.Digests
+-	}
+-	return nil
+-}
+-
+-func (m *DataRequest) GetMsgType() PullMsgType {
+-	if m != nil {
+-		return m.MsgType
+-	}
+-	return PullMsgType_UNDEFINED
+-}
+-
+ // GossipHello is the message that is used for the peer to initiate
+ // a pull round with another peer
+ type GossipHello struct {
+@@ -1090,27 +951,6 @@ func (m *GossipHello) String() string            { return proto.CompactTextStrin
+ func (*GossipHello) ProtoMessage()               {}
+ func (*GossipHello) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{10} }
+ 
+-func (m *GossipHello) GetNonce() uint64 {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return 0
+-}
+-
+-func (m *GossipHello) GetMetadata() []byte {
+-	if m != nil {
+-		return m.Metadata
+-	}
+-	return nil
+-}
+-
+-func (m *GossipHello) GetMsgType() PullMsgType {
+-	if m != nil {
+-		return m.MsgType
+-	}
+-	return PullMsgType_UNDEFINED
+-}
+-
+ // DataUpdate is the the final message in the pull phase
+ // sent from the receiver to the initiator
+ type DataUpdate struct {
+@@ -1124,13 +964,6 @@ func (m *DataUpdate) String() string            { return proto.CompactTextString
+ func (*DataUpdate) ProtoMessage()               {}
+ func (*DataUpdate) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{11} }
+ 
+-func (m *DataUpdate) GetNonce() uint64 {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return 0
+-}
+-
+ func (m *DataUpdate) GetData() []*Envelope {
+ 	if m != nil {
+ 		return m.Data
+@@ -1138,13 +971,6 @@ func (m *DataUpdate) GetData() []*Envelope {
+ 	return nil
+ }
+ 
+-func (m *DataUpdate) GetMsgType() PullMsgType {
+-	if m != nil {
+-		return m.MsgType
+-	}
+-	return PullMsgType_UNDEFINED
+-}
+-
+ // DataDigest is the message sent from the receiver peer
+ // to the initator peer and contains the data items it has
+ type DataDigest struct {
+@@ -1158,27 +984,6 @@ func (m *DataDigest) String() string            { return proto.CompactTextString
+ func (*DataDigest) ProtoMessage()               {}
+ func (*DataDigest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{12} }
+ 
+-func (m *DataDigest) GetNonce() uint64 {
+-	if m != nil {
+-		return m.Nonce
+-	}
+-	return 0
+-}
+-
+-func (m *DataDigest) GetDigests() []string {
+-	if m != nil {
+-		return m.Digests
+-	}
+-	return nil
+-}
+-
+-func (m *DataDigest) GetMsgType() PullMsgType {
+-	if m != nil {
+-		return m.MsgType
+-	}
+-	return PullMsgType_UNDEFINED
+-}
+-
+ // DataMessage is the message that contains a block
+ type DataMessage struct {
+ 	Payload *Payload `protobuf:"bytes,1,opt,name=payload" json:"payload,omitempty"`
+@@ -1207,20 +1012,6 @@ func (m *Payload) String() string            { return proto.CompactTextString(m)
+ func (*Payload) ProtoMessage()               {}
+ func (*Payload) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{14} }
+ 
+-func (m *Payload) GetSeqNum() uint64 {
+-	if m != nil {
+-		return m.SeqNum
+-	}
+-	return 0
+-}
+-
+-func (m *Payload) GetData() []byte {
+-	if m != nil {
+-		return m.Data
+-	}
+-	return nil
+-}
+-
+ // AliveMessage is sent to inform remote peers
+ // of a peer's existence and activity
+ type AliveMessage struct {
+@@ -1248,13 +1039,6 @@ func (m *AliveMessage) GetTimestamp() *PeerTime {
+ 	return nil
+ }
+ 
+-func (m *AliveMessage) GetIdentity() []byte {
+-	if m != nil {
+-		return m.Identity
+-	}
+-	return nil
+-}
+-
+ // Leadership Message is sent during leader election to inform
+ // remote peers about intent of peer to proclaim itself as leader
+ type LeadershipMessage struct {
+@@ -1268,13 +1052,6 @@ func (m *LeadershipMessage) String() string            { return proto.CompactTex
+ func (*LeadershipMessage) ProtoMessage()               {}
+ func (*LeadershipMessage) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{16} }
+ 
+-func (m *LeadershipMessage) GetPkiId() []byte {
+-	if m != nil {
+-		return m.PkiId
+-	}
+-	return nil
+-}
+-
+ func (m *LeadershipMessage) GetTimestamp() *PeerTime {
+ 	if m != nil {
+ 		return m.Timestamp
+@@ -1282,13 +1059,6 @@ func (m *LeadershipMessage) GetTimestamp() *PeerTime {
+ 	return nil
+ }
+ 
+-func (m *LeadershipMessage) GetIsDeclaration() bool {
+-	if m != nil {
+-		return m.IsDeclaration
+-	}
+-	return false
+-}
+-
+ // PeerTime defines the logical time of a peer's life
+ type PeerTime struct {
+ 	IncNum uint64 `protobuf:"varint,1,opt,name=inc_num,json=incNum" json:"inc_num,omitempty"`
+@@ -1300,20 +1070,6 @@ func (m *PeerTime) String() string            { return proto.CompactTextString(m
+ func (*PeerTime) ProtoMessage()               {}
+ func (*PeerTime) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{17} }
+ 
+-func (m *PeerTime) GetIncNum() uint64 {
+-	if m != nil {
+-		return m.IncNum
+-	}
+-	return 0
+-}
+-
+-func (m *PeerTime) GetSeqNum() uint64 {
+-	if m != nil {
+-		return m.SeqNum
+-	}
+-	return 0
+-}
+-
+ // MembershipRequest is used to ask membership information
+ // from a remote peer
+ type MembershipRequest struct {
+@@ -1333,13 +1089,6 @@ func (m *MembershipRequest) GetSelfInformation() *Envelope {
+ 	return nil
+ }
+ 
+-func (m *MembershipRequest) GetKnown() [][]byte {
+-	if m != nil {
+-		return m.Known
+-	}
+-	return nil
+-}
+-
+ // MembershipResponse is used for replying to MembershipRequests
+ type MembershipResponse struct {
+ 	Alive []*Envelope `protobuf:"bytes,1,rep,name=alive" json:"alive,omitempty"`
+@@ -1378,27 +1127,6 @@ func (m *Member) String() string            { return proto.CompactTextString(m)
+ func (*Member) ProtoMessage()               {}
+ func (*Member) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{20} }
+ 
+-func (m *Member) GetEndpoint() string {
+-	if m != nil {
+-		return m.Endpoint
+-	}
+-	return ""
+-}
+-
+-func (m *Member) GetMetadata() []byte {
+-	if m != nil {
+-		return m.Metadata
+-	}
+-	return nil
+-}
+-
+-func (m *Member) GetPkiId() []byte {
+-	if m != nil {
+-		return m.PkiId
+-	}
+-	return nil
+-}
+-
+ // Empty is used for pinging and in tests
+ type Empty struct {
+ }
+@@ -1420,20 +1148,6 @@ func (m *RemoteStateRequest) String() string            { return proto.CompactTe
+ func (*RemoteStateRequest) ProtoMessage()               {}
+ func (*RemoteStateRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{22} }
+ 
+-func (m *RemoteStateRequest) GetStartSeqNum() uint64 {
+-	if m != nil {
+-		return m.StartSeqNum
+-	}
+-	return 0
+-}
+-
+-func (m *RemoteStateRequest) GetEndSeqNum() uint64 {
+-	if m != nil {
+-		return m.EndSeqNum
+-	}
+-	return 0
+-}
+-
+ // RemoteStateResponse is used to send a set of blocks
+ // to a remote peer
+ type RemoteStateResponse struct {
+@@ -1487,7 +1201,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for Gossip service
+ 
+@@ -1620,7 +1334,7 @@ var _Gossip_serviceDesc = grpc.ServiceDesc{
+ 			ClientStreams: true,
+ 		},
+ 	},
+-	Metadata: "gossip/message.proto",
++	Metadata: fileDescriptor0,
+ }
+ 
+ func init() { proto.RegisterFile("gossip/message.proto", fileDescriptor0) }
+diff --git a/protos/ledger/queryresult/kv_query_result.pb.go b/protos/ledger/queryresult/kv_query_result.pb.go
+index a4438c9..27d85d4 100644
+--- a/protos/ledger/queryresult/kv_query_result.pb.go
++++ b/protos/ledger/queryresult/kv_query_result.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: ledger/queryresult/kv_query_result.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package queryresult is a generated protocol buffer package.
+@@ -41,27 +42,6 @@ func (m *KV) String() string            { return proto.CompactTextString(m) }
+ func (*KV) ProtoMessage()               {}
+ func (*KV) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *KV) GetNamespace() string {
+-	if m != nil {
+-		return m.Namespace
+-	}
+-	return ""
+-}
+-
+-func (m *KV) GetKey() string {
+-	if m != nil {
+-		return m.Key
+-	}
+-	return ""
+-}
+-
+-func (m *KV) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+ // KeyModification -- QueryResult for history query. Holds a transaction ID, value,
+ // timestamp, and delete marker which resulted from a history query.
+ type KeyModification struct {
+@@ -76,20 +56,6 @@ func (m *KeyModification) String() string            { return proto.CompactTextS
+ func (*KeyModification) ProtoMessage()               {}
+ func (*KeyModification) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *KeyModification) GetTxId() string {
+-	if m != nil {
+-		return m.TxId
+-	}
+-	return ""
+-}
+-
+-func (m *KeyModification) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+ func (m *KeyModification) GetTimestamp() *google_protobuf.Timestamp {
+ 	if m != nil {
+ 		return m.Timestamp
+@@ -97,13 +63,6 @@ func (m *KeyModification) GetTimestamp() *google_protobuf.Timestamp {
+ 	return nil
+ }
+ 
+-func (m *KeyModification) GetIsDelete() bool {
+-	if m != nil {
+-		return m.IsDelete
+-	}
+-	return false
+-}
+-
+ func init() {
+ 	proto.RegisterType((*KV)(nil), "queryresult.KV")
+ 	proto.RegisterType((*KeyModification)(nil), "queryresult.KeyModification")
+diff --git a/protos/ledger/rwset/kvrwset/kv_rwset.pb.go b/protos/ledger/rwset/kvrwset/kv_rwset.pb.go
+index db61bd0..3a78267 100644
+--- a/protos/ledger/rwset/kvrwset/kv_rwset.pb.go
++++ b/protos/ledger/rwset/kvrwset/kv_rwset.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: ledger/rwset/kvrwset/kv_rwset.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package kvrwset is a generated protocol buffer package.
+@@ -78,13 +79,6 @@ func (m *KVRead) String() string            { return proto.CompactTextString(m)
+ func (*KVRead) ProtoMessage()               {}
+ func (*KVRead) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *KVRead) GetKey() string {
+-	if m != nil {
+-		return m.Key
+-	}
+-	return ""
+-}
+-
+ func (m *KVRead) GetVersion() *Version {
+ 	if m != nil {
+ 		return m.Version
+@@ -104,27 +98,6 @@ func (m *KVWrite) String() string            { return proto.CompactTextString(m)
+ func (*KVWrite) ProtoMessage()               {}
+ func (*KVWrite) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+ 
+-func (m *KVWrite) GetKey() string {
+-	if m != nil {
+-		return m.Key
+-	}
+-	return ""
+-}
+-
+-func (m *KVWrite) GetIsDelete() bool {
+-	if m != nil {
+-		return m.IsDelete
+-	}
+-	return false
+-}
+-
+-func (m *KVWrite) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+ // Version encapsulates the version of a Key
+ // A version of a committed key is maintained as the height of the transaction that committed the key.
+ // The height is represenetd as a tuple <blockNum, txNum> where the txNum is the height of the transaction
+@@ -139,20 +112,6 @@ func (m *Version) String() string            { return proto.CompactTextString(m)
+ func (*Version) ProtoMessage()               {}
+ func (*Version) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+ 
+-func (m *Version) GetBlockNum() uint64 {
+-	if m != nil {
+-		return m.BlockNum
+-	}
+-	return 0
+-}
+-
+-func (m *Version) GetTxNum() uint64 {
+-	if m != nil {
+-		return m.TxNum
+-	}
+-	return 0
+-}
+-
+ // RangeQueryInfo encapsulates the details of a range query performed by a transaction during simulation.
+ // This helps protect transactions from phantom reads by varifying during validation whether any new items
+ // got committed within the given range between transaction simuation and validation
+@@ -195,27 +154,6 @@ func (m *RangeQueryInfo) GetReadsInfo() isRangeQueryInfo_ReadsInfo {
+ 	return nil
+ }
+ 
+-func (m *RangeQueryInfo) GetStartKey() string {
+-	if m != nil {
+-		return m.StartKey
+-	}
+-	return ""
+-}
+-
+-func (m *RangeQueryInfo) GetEndKey() string {
+-	if m != nil {
+-		return m.EndKey
+-	}
+-	return ""
+-}
+-
+-func (m *RangeQueryInfo) GetItrExhausted() bool {
+-	if m != nil {
+-		return m.ItrExhausted
+-	}
+-	return false
+-}
+-
+ func (m *RangeQueryInfo) GetRawReads() *QueryReads {
+ 	if x, ok := m.GetReadsInfo().(*RangeQueryInfo_RawReads); ok {
+ 		return x.RawReads
+@@ -337,27 +275,6 @@ func (m *QueryReadsMerkleSummary) String() string            { return proto.Comp
+ func (*QueryReadsMerkleSummary) ProtoMessage()               {}
+ func (*QueryReadsMerkleSummary) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{6} }
+ 
+-func (m *QueryReadsMerkleSummary) GetMaxDegree() uint32 {
+-	if m != nil {
+-		return m.MaxDegree
+-	}
+-	return 0
+-}
+-
+-func (m *QueryReadsMerkleSummary) GetMaxLevel() uint32 {
+-	if m != nil {
+-		return m.MaxLevel
+-	}
+-	return 0
+-}
+-
+-func (m *QueryReadsMerkleSummary) GetMaxLevelHashes() [][]byte {
+-	if m != nil {
+-		return m.MaxLevelHashes
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*KVRWSet)(nil), "kvrwset.KVRWSet")
+ 	proto.RegisterType((*KVRead)(nil), "kvrwset.KVRead")
+diff --git a/protos/ledger/rwset/rwset.pb.go b/protos/ledger/rwset/rwset.pb.go
+index fcabec8..be087b4 100644
+--- a/protos/ledger/rwset/rwset.pb.go
++++ b/protos/ledger/rwset/rwset.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: ledger/rwset/rwset.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package rwset is a generated protocol buffer package.
+@@ -59,13 +60,6 @@ func (m *TxReadWriteSet) String() string            { return proto.CompactTextSt
+ func (*TxReadWriteSet) ProtoMessage()               {}
+ func (*TxReadWriteSet) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *TxReadWriteSet) GetDataModel() TxReadWriteSet_DataModel {
+-	if m != nil {
+-		return m.DataModel
+-	}
+-	return TxReadWriteSet_KV
+-}
+-
+ func (m *TxReadWriteSet) GetNsRwset() []*NsReadWriteSet {
+ 	if m != nil {
+ 		return m.NsRwset
+@@ -84,20 +78,6 @@ func (m *NsReadWriteSet) String() string            { return proto.CompactTextSt
+ func (*NsReadWriteSet) ProtoMessage()               {}
+ func (*NsReadWriteSet) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *NsReadWriteSet) GetNamespace() string {
+-	if m != nil {
+-		return m.Namespace
+-	}
+-	return ""
+-}
+-
+-func (m *NsReadWriteSet) GetRwset() []byte {
+-	if m != nil {
+-		return m.Rwset
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*TxReadWriteSet)(nil), "rwset.TxReadWriteSet")
+ 	proto.RegisterType((*NsReadWriteSet)(nil), "rwset.NsReadWriteSet")
+diff --git a/protos/msp/identities.pb.go b/protos/msp/identities.pb.go
+index 5386474..bcb5345 100644
+--- a/protos/msp/identities.pb.go
++++ b/protos/msp/identities.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: msp/identities.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package msp is a generated protocol buffer package.
+@@ -53,20 +54,6 @@ func (m *SerializedIdentity) String() string            { return proto.CompactTe
+ func (*SerializedIdentity) ProtoMessage()               {}
+ func (*SerializedIdentity) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *SerializedIdentity) GetMspid() string {
+-	if m != nil {
+-		return m.Mspid
+-	}
+-	return ""
+-}
+-
+-func (m *SerializedIdentity) GetIdBytes() []byte {
+-	if m != nil {
+-		return m.IdBytes
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*SerializedIdentity)(nil), "msp.SerializedIdentity")
+ }
+diff --git a/protos/msp/msp_config.pb.go b/protos/msp/msp_config.pb.go
+index 5547b2d..9b65f72 100644
+--- a/protos/msp/msp_config.pb.go
++++ b/protos/msp/msp_config.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: msp/msp_config.proto
++// DO NOT EDIT!
+ 
+ package msp
+ 
+@@ -28,20 +29,6 @@ func (m *MSPConfig) String() string            { return proto.CompactTextString(
+ func (*MSPConfig) ProtoMessage()               {}
+ func (*MSPConfig) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{0} }
+ 
+-func (m *MSPConfig) GetType() int32 {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return 0
+-}
+-
+-func (m *MSPConfig) GetConfig() []byte {
+-	if m != nil {
+-		return m.Config
+-	}
+-	return nil
+-}
+-
+ // FabricMSPConfig collects all the configuration information for
+ // a Fabric MSP.
+ // Here we assume a default certificate validation policy, where
+@@ -92,41 +79,6 @@ func (m *FabricMSPConfig) String() string            { return proto.CompactTextS
+ func (*FabricMSPConfig) ProtoMessage()               {}
+ func (*FabricMSPConfig) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{1} }
+ 
+-func (m *FabricMSPConfig) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
+-
+-func (m *FabricMSPConfig) GetRootCerts() [][]byte {
+-	if m != nil {
+-		return m.RootCerts
+-	}
+-	return nil
+-}
+-
+-func (m *FabricMSPConfig) GetIntermediateCerts() [][]byte {
+-	if m != nil {
+-		return m.IntermediateCerts
+-	}
+-	return nil
+-}
+-
+-func (m *FabricMSPConfig) GetAdmins() [][]byte {
+-	if m != nil {
+-		return m.Admins
+-	}
+-	return nil
+-}
+-
+-func (m *FabricMSPConfig) GetRevocationList() [][]byte {
+-	if m != nil {
+-		return m.RevocationList
+-	}
+-	return nil
+-}
+-
+ func (m *FabricMSPConfig) GetSigningIdentity() *SigningIdentityInfo {
+ 	if m != nil {
+ 		return m.SigningIdentity
+@@ -167,20 +119,6 @@ func (m *FabricCryptoConfig) String() string            { return proto.CompactTe
+ func (*FabricCryptoConfig) ProtoMessage()               {}
+ func (*FabricCryptoConfig) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{2} }
+ 
+-func (m *FabricCryptoConfig) GetSignatureHashFamily() string {
+-	if m != nil {
+-		return m.SignatureHashFamily
+-	}
+-	return ""
+-}
+-
+-func (m *FabricCryptoConfig) GetIdentityIdentifierHashFunction() string {
+-	if m != nil {
+-		return m.IdentityIdentifierHashFunction
+-	}
+-	return ""
+-}
+-
+ // SigningIdentityInfo represents the configuration information
+ // related to the signing identity the peer is to use for generating
+ // endorsements
+@@ -199,13 +137,6 @@ func (m *SigningIdentityInfo) String() string            { return proto.CompactT
+ func (*SigningIdentityInfo) ProtoMessage()               {}
+ func (*SigningIdentityInfo) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{3} }
+ 
+-func (m *SigningIdentityInfo) GetPublicSigner() []byte {
+-	if m != nil {
+-		return m.PublicSigner
+-	}
+-	return nil
+-}
+-
+ func (m *SigningIdentityInfo) GetPrivateSigner() *KeyInfo {
+ 	if m != nil {
+ 		return m.PrivateSigner
+@@ -232,20 +163,6 @@ func (m *KeyInfo) String() string            { return proto.CompactTextString(m)
+ func (*KeyInfo) ProtoMessage()               {}
+ func (*KeyInfo) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{4} }
+ 
+-func (m *KeyInfo) GetKeyIdentifier() string {
+-	if m != nil {
+-		return m.KeyIdentifier
+-	}
+-	return ""
+-}
+-
+-func (m *KeyInfo) GetKeyMaterial() []byte {
+-	if m != nil {
+-		return m.KeyMaterial
+-	}
+-	return nil
+-}
+-
+ // FabricOUIdentifier represents an organizational unit and
+ // its related chain of trust identifier.
+ type FabricOUIdentifier struct {
+@@ -267,20 +184,6 @@ func (m *FabricOUIdentifier) String() string            { return proto.CompactTe
+ func (*FabricOUIdentifier) ProtoMessage()               {}
+ func (*FabricOUIdentifier) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{5} }
+ 
+-func (m *FabricOUIdentifier) GetCertificate() []byte {
+-	if m != nil {
+-		return m.Certificate
+-	}
+-	return nil
+-}
+-
+-func (m *FabricOUIdentifier) GetOrganizationalUnitIdentifier() string {
+-	if m != nil {
+-		return m.OrganizationalUnitIdentifier
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*MSPConfig)(nil), "msp.MSPConfig")
+ 	proto.RegisterType((*FabricMSPConfig)(nil), "msp.FabricMSPConfig")
+diff --git a/protos/msp/msp_principal.pb.go b/protos/msp/msp_principal.pb.go
+index da96b87..29ce02f 100644
+--- a/protos/msp/msp_principal.pb.go
++++ b/protos/msp/msp_principal.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: msp/msp_principal.proto
++// DO NOT EDIT!
+ 
+ package msp
+ 
+@@ -104,20 +105,6 @@ func (m *MSPPrincipal) String() string            { return proto.CompactTextStri
+ func (*MSPPrincipal) ProtoMessage()               {}
+ func (*MSPPrincipal) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{0} }
+ 
+-func (m *MSPPrincipal) GetPrincipalClassification() MSPPrincipal_Classification {
+-	if m != nil {
+-		return m.PrincipalClassification
+-	}
+-	return MSPPrincipal_ROLE
+-}
+-
+-func (m *MSPPrincipal) GetPrincipal() []byte {
+-	if m != nil {
+-		return m.Principal
+-	}
+-	return nil
+-}
+-
+ // OrganizationUnit governs the organization of the Principal
+ // field of a policy principal when a specific organization unity members
+ // are to be defined within a policy principal.
+@@ -138,27 +125,6 @@ func (m *OrganizationUnit) String() string            { return proto.CompactText
+ func (*OrganizationUnit) ProtoMessage()               {}
+ func (*OrganizationUnit) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{1} }
+ 
+-func (m *OrganizationUnit) GetMspIdentifier() string {
+-	if m != nil {
+-		return m.MspIdentifier
+-	}
+-	return ""
+-}
+-
+-func (m *OrganizationUnit) GetOrganizationalUnitIdentifier() string {
+-	if m != nil {
+-		return m.OrganizationalUnitIdentifier
+-	}
+-	return ""
+-}
+-
+-func (m *OrganizationUnit) GetCertifiersIdentifier() []byte {
+-	if m != nil {
+-		return m.CertifiersIdentifier
+-	}
+-	return nil
+-}
+-
+ // MSPRole governs the organization of the Principal
+ // field of an MSPPrincipal when it aims to define one of the
+ // two dedicated roles within an MSP: Admin and Members.
+@@ -176,20 +142,6 @@ func (m *MSPRole) String() string            { return proto.CompactTextString(m)
+ func (*MSPRole) ProtoMessage()               {}
+ func (*MSPRole) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{2} }
+ 
+-func (m *MSPRole) GetMspIdentifier() string {
+-	if m != nil {
+-		return m.MspIdentifier
+-	}
+-	return ""
+-}
+-
+-func (m *MSPRole) GetRole() MSPRole_MSPRoleType {
+-	if m != nil {
+-		return m.Role
+-	}
+-	return MSPRole_MEMBER
+-}
+-
+ func init() {
+ 	proto.RegisterType((*MSPPrincipal)(nil), "common.MSPPrincipal")
+ 	proto.RegisterType((*OrganizationUnit)(nil), "common.OrganizationUnit")
+diff --git a/protos/orderer/ab.pb.go b/protos/orderer/ab.pb.go
+index 4d081d2..6f6c124 100644
+--- a/protos/orderer/ab.pb.go
++++ b/protos/orderer/ab.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: orderer/ab.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package orderer is a generated protocol buffer package.
+@@ -81,13 +82,6 @@ func (m *BroadcastResponse) String() string            { return proto.CompactTex
+ func (*BroadcastResponse) ProtoMessage()               {}
+ func (*BroadcastResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *BroadcastResponse) GetStatus() common.Status {
+-	if m != nil {
+-		return m.Status
+-	}
+-	return common.Status_UNKNOWN
+-}
+-
+ type SeekNewest struct {
+ }
+ 
+@@ -113,13 +107,6 @@ func (m *SeekSpecified) String() string            { return proto.CompactTextStr
+ func (*SeekSpecified) ProtoMessage()               {}
+ func (*SeekSpecified) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
+ 
+-func (m *SeekSpecified) GetNumber() uint64 {
+-	if m != nil {
+-		return m.Number
+-	}
+-	return 0
+-}
+-
+ type SeekPosition struct {
+ 	// Types that are valid to be assigned to Type:
+ 	//	*SeekPosition_Newest
+@@ -305,13 +292,6 @@ func (m *SeekInfo) GetStop() *SeekPosition {
+ 	return nil
+ }
+ 
+-func (m *SeekInfo) GetBehavior() SeekInfo_SeekBehavior {
+-	if m != nil {
+-		return m.Behavior
+-	}
+-	return SeekInfo_BLOCK_UNTIL_READY
+-}
+-
+ type DeliverResponse struct {
+ 	// Types that are valid to be assigned to Type:
+ 	//	*DeliverResponse_Status
+@@ -445,7 +425,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for AtomicBroadcast service
+ 
+@@ -609,7 +589,7 @@ var _AtomicBroadcast_serviceDesc = grpc.ServiceDesc{
+ 			ClientStreams: true,
+ 		},
+ 	},
+-	Metadata: "orderer/ab.proto",
++	Metadata: fileDescriptor0,
+ }
+ 
+ func init() { proto.RegisterFile("orderer/ab.proto", fileDescriptor0) }
+diff --git a/protos/orderer/configuration.pb.go b/protos/orderer/configuration.pb.go
+index f4efdae..cd7ce63 100644
+--- a/protos/orderer/configuration.pb.go
++++ b/protos/orderer/configuration.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: orderer/configuration.proto
++// DO NOT EDIT!
+ 
+ package orderer
+ 
+@@ -21,13 +22,6 @@ func (m *ConsensusType) String() string            { return proto.CompactTextStr
+ func (*ConsensusType) ProtoMessage()               {}
+ func (*ConsensusType) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{0} }
+ 
+-func (m *ConsensusType) GetType() string {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return ""
+-}
+-
+ type BatchSize struct {
+ 	// Simply specified as number of messages for now, in the future
+ 	// we may want to allow this to be specified by size in bytes
+@@ -45,27 +39,6 @@ func (m *BatchSize) String() string            { return proto.CompactTextString(
+ func (*BatchSize) ProtoMessage()               {}
+ func (*BatchSize) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{1} }
+ 
+-func (m *BatchSize) GetMaxMessageCount() uint32 {
+-	if m != nil {
+-		return m.MaxMessageCount
+-	}
+-	return 0
+-}
+-
+-func (m *BatchSize) GetAbsoluteMaxBytes() uint32 {
+-	if m != nil {
+-		return m.AbsoluteMaxBytes
+-	}
+-	return 0
+-}
+-
+-func (m *BatchSize) GetPreferredMaxBytes() uint32 {
+-	if m != nil {
+-		return m.PreferredMaxBytes
+-	}
+-	return 0
+-}
+-
+ type BatchTimeout struct {
+ 	// Any duration string parseable by ParseDuration():
+ 	// https://golang.org/pkg/time/#ParseDuration
+@@ -77,13 +50,6 @@ func (m *BatchTimeout) String() string            { return proto.CompactTextStri
+ func (*BatchTimeout) ProtoMessage()               {}
+ func (*BatchTimeout) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{2} }
+ 
+-func (m *BatchTimeout) GetTimeout() string {
+-	if m != nil {
+-		return m.Timeout
+-	}
+-	return ""
+-}
+-
+ // Carries a list of bootstrap brokers, i.e. this is not the exclusive set of
+ // brokers an ordering service
+ type KafkaBrokers struct {
+@@ -97,13 +63,6 @@ func (m *KafkaBrokers) String() string            { return proto.CompactTextStri
+ func (*KafkaBrokers) ProtoMessage()               {}
+ func (*KafkaBrokers) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{3} }
+ 
+-func (m *KafkaBrokers) GetBrokers() []string {
+-	if m != nil {
+-		return m.Brokers
+-	}
+-	return nil
+-}
+-
+ // ChannelRestrictions is the mssage which conveys restrictions on channel creation for an orderer
+ type ChannelRestrictions struct {
+ 	MaxCount uint64 `protobuf:"varint,1,opt,name=max_count,json=maxCount" json:"max_count,omitempty"`
+@@ -114,13 +73,6 @@ func (m *ChannelRestrictions) String() string            { return proto.CompactT
+ func (*ChannelRestrictions) ProtoMessage()               {}
+ func (*ChannelRestrictions) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{4} }
+ 
+-func (m *ChannelRestrictions) GetMaxCount() uint64 {
+-	if m != nil {
+-		return m.MaxCount
+-	}
+-	return 0
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ConsensusType)(nil), "orderer.ConsensusType")
+ 	proto.RegisterType((*BatchSize)(nil), "orderer.BatchSize")
+diff --git a/protos/orderer/kafka.pb.go b/protos/orderer/kafka.pb.go
+index 3ee445b..3be9d5d 100644
+--- a/protos/orderer/kafka.pb.go
++++ b/protos/orderer/kafka.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: orderer/kafka.proto
++// DO NOT EDIT!
+ 
+ package orderer
+ 
+@@ -176,13 +177,6 @@ func (m *KafkaMessageRegular) String() string            { return proto.CompactT
+ func (*KafkaMessageRegular) ProtoMessage()               {}
+ func (*KafkaMessageRegular) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{1} }
+ 
+-func (m *KafkaMessageRegular) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+ // KafkaMessageTimeToCut is used to signal to the orderers
+ // that it is time to cut block <block_number>.
+ type KafkaMessageTimeToCut struct {
+@@ -194,13 +188,6 @@ func (m *KafkaMessageTimeToCut) String() string            { return proto.Compac
+ func (*KafkaMessageTimeToCut) ProtoMessage()               {}
+ func (*KafkaMessageTimeToCut) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{2} }
+ 
+-func (m *KafkaMessageTimeToCut) GetBlockNumber() uint64 {
+-	if m != nil {
+-		return m.BlockNumber
+-	}
+-	return 0
+-}
+-
+ // KafkaMessageConnect is posted by an orderer upon booting up.
+ // It is used to prevent the panic that would be caused if we
+ // were to consume an empty partition. It is ignored by all
+@@ -214,13 +201,6 @@ func (m *KafkaMessageConnect) String() string            { return proto.CompactT
+ func (*KafkaMessageConnect) ProtoMessage()               {}
+ func (*KafkaMessageConnect) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{3} }
+ 
+-func (m *KafkaMessageConnect) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+ // LastOffsetPersisted is the encoded value for the Metadata message
+ // which is encoded in the ORDERER block metadata index for the case
+ // of the Kafka-based orderer.
+@@ -233,13 +213,6 @@ func (m *KafkaMetadata) String() string            { return proto.CompactTextStr
+ func (*KafkaMetadata) ProtoMessage()               {}
+ func (*KafkaMetadata) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{4} }
+ 
+-func (m *KafkaMetadata) GetLastOffsetPersisted() int64 {
+-	if m != nil {
+-		return m.LastOffsetPersisted
+-	}
+-	return 0
+-}
+-
+ func init() {
+ 	proto.RegisterType((*KafkaMessage)(nil), "orderer.KafkaMessage")
+ 	proto.RegisterType((*KafkaMessageRegular)(nil), "orderer.KafkaMessageRegular")
+diff --git a/protos/peer/admin.pb.go b/protos/peer/admin.pb.go
+index f05add0..21abfd5 100644
+--- a/protos/peer/admin.pb.go
++++ b/protos/peer/admin.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/admin.proto
++// DO NOT EDIT!
+ 
+ /*
+ Package peer is a generated protocol buffer package.
+@@ -10,6 +11,7 @@ It is generated from these files:
+ 	peer/chaincode_event.proto
+ 	peer/chaincode_shim.proto
+ 	peer/configuration.proto
++	peer/container.proto
+ 	peer/events.proto
+ 	peer/peer.proto
+ 	peer/proposal.proto
+@@ -39,6 +41,14 @@ It has these top-level messages:
+ 	QueryResponse
+ 	AnchorPeers
+ 	AnchorPeer
++	ContainerMessage
++	BuildImageReq
++	CreateContainerReq
++	StartContainerReq
++	StopContainerReq
++	KillContainerReq
++	RemoveContainerReq
++	RemoveImageExtendedReq
+ 	ChaincodeReg
+ 	Interest
+ 	Register
+@@ -134,13 +144,6 @@ func (m *ServerStatus) String() string            { return proto.CompactTextStri
+ func (*ServerStatus) ProtoMessage()               {}
+ func (*ServerStatus) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
+ 
+-func (m *ServerStatus) GetStatus() ServerStatus_StatusCode {
+-	if m != nil {
+-		return m.Status
+-	}
+-	return ServerStatus_UNDEFINED
+-}
+-
+ type LogLevelRequest struct {
+ 	LogModule string `protobuf:"bytes,1,opt,name=log_module,json=logModule" json:"log_module,omitempty"`
+ 	LogLevel  string `protobuf:"bytes,2,opt,name=log_level,json=logLevel" json:"log_level,omitempty"`
+@@ -151,20 +154,6 @@ func (m *LogLevelRequest) String() string            { return proto.CompactTextS
+ func (*LogLevelRequest) ProtoMessage()               {}
+ func (*LogLevelRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
+ 
+-func (m *LogLevelRequest) GetLogModule() string {
+-	if m != nil {
+-		return m.LogModule
+-	}
+-	return ""
+-}
+-
+-func (m *LogLevelRequest) GetLogLevel() string {
+-	if m != nil {
+-		return m.LogLevel
+-	}
+-	return ""
+-}
+-
+ type LogLevelResponse struct {
+ 	LogModule string `protobuf:"bytes,1,opt,name=log_module,json=logModule" json:"log_module,omitempty"`
+ 	LogLevel  string `protobuf:"bytes,2,opt,name=log_level,json=logLevel" json:"log_level,omitempty"`
+@@ -175,20 +164,6 @@ func (m *LogLevelResponse) String() string            { return proto.CompactText
+ func (*LogLevelResponse) ProtoMessage()               {}
+ func (*LogLevelResponse) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
+ 
+-func (m *LogLevelResponse) GetLogModule() string {
+-	if m != nil {
+-		return m.LogModule
+-	}
+-	return ""
+-}
+-
+-func (m *LogLevelResponse) GetLogLevel() string {
+-	if m != nil {
+-		return m.LogLevel
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ServerStatus)(nil), "protos.ServerStatus")
+ 	proto.RegisterType((*LogLevelRequest)(nil), "protos.LogLevelRequest")
+@@ -202,7 +177,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for Admin service
+ 
+@@ -399,7 +374,7 @@ var _Admin_serviceDesc = grpc.ServiceDesc{
+ 		},
+ 	},
+ 	Streams:  []grpc.StreamDesc{},
+-	Metadata: "peer/admin.proto",
++	Metadata: fileDescriptor0,
+ }
+ 
+ func init() { proto.RegisterFile("peer/admin.proto", fileDescriptor0) }
+diff --git a/protos/peer/chaincode.pb.go b/protos/peer/chaincode.pb.go
+index c45f51a..c1ab011 100644
+--- a/protos/peer/chaincode.pb.go
++++ b/protos/peer/chaincode.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/chaincode.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -38,11 +39,12 @@ func (ConfidentialityLevel) EnumDescriptor() ([]byte, []int) { return fileDescri
+ type ChaincodeSpec_Type int32
+ 
+ const (
+-	ChaincodeSpec_UNDEFINED ChaincodeSpec_Type = 0
+-	ChaincodeSpec_GOLANG    ChaincodeSpec_Type = 1
+-	ChaincodeSpec_NODE      ChaincodeSpec_Type = 2
+-	ChaincodeSpec_CAR       ChaincodeSpec_Type = 3
+-	ChaincodeSpec_JAVA      ChaincodeSpec_Type = 4
++	ChaincodeSpec_UNDEFINED  ChaincodeSpec_Type = 0
++	ChaincodeSpec_GOLANG     ChaincodeSpec_Type = 1
++	ChaincodeSpec_NODE       ChaincodeSpec_Type = 2
++	ChaincodeSpec_CAR        ChaincodeSpec_Type = 3
++	ChaincodeSpec_JAVA       ChaincodeSpec_Type = 4
++	ChaincodeSpec_JAVASCRIPT ChaincodeSpec_Type = 5
+ )
+ 
+ var ChaincodeSpec_Type_name = map[int32]string{
+@@ -51,13 +53,15 @@ var ChaincodeSpec_Type_name = map[int32]string{
+ 	2: "NODE",
+ 	3: "CAR",
+ 	4: "JAVA",
++	5: "JAVASCRIPT",
+ }
+ var ChaincodeSpec_Type_value = map[string]int32{
+-	"UNDEFINED": 0,
+-	"GOLANG":    1,
+-	"NODE":      2,
+-	"CAR":       3,
+-	"JAVA":      4,
++	"UNDEFINED":  0,
++	"GOLANG":     1,
++	"NODE":       2,
++	"CAR":        3,
++	"JAVA":       4,
++	"JAVASCRIPT": 5,
+ }
+ 
+ func (x ChaincodeSpec_Type) String() string {
+@@ -110,27 +114,6 @@ func (m *ChaincodeID) String() string            { return proto.CompactTextStrin
+ func (*ChaincodeID) ProtoMessage()               {}
+ func (*ChaincodeID) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{0} }
+ 
+-func (m *ChaincodeID) GetPath() string {
+-	if m != nil {
+-		return m.Path
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeID) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeID) GetVersion() string {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return ""
+-}
+-
+ // Carries the chaincode function and its arguments.
+ // UnmarshalJSON in transaction.go converts the string-based REST/JSON input to
+ // the []byte-based current ChaincodeInput structure.
+@@ -143,13 +126,6 @@ func (m *ChaincodeInput) String() string            { return proto.CompactTextSt
+ func (*ChaincodeInput) ProtoMessage()               {}
+ func (*ChaincodeInput) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{1} }
+ 
+-func (m *ChaincodeInput) GetArgs() [][]byte {
+-	if m != nil {
+-		return m.Args
+-	}
+-	return nil
+-}
+-
+ // Carries the chaincode specification. This is the actual metadata required for
+ // defining a chaincode.
+ type ChaincodeSpec struct {
+@@ -164,13 +140,6 @@ func (m *ChaincodeSpec) String() string            { return proto.CompactTextStr
+ func (*ChaincodeSpec) ProtoMessage()               {}
+ func (*ChaincodeSpec) Descriptor() ([]byte, []int) { return fileDescriptor1, []int{2} }
+ 
+-func (m *ChaincodeSpec) GetType() ChaincodeSpec_Type {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return ChaincodeSpec_UNDEFINED
+-}
+-
+ func (m *ChaincodeSpec) GetChaincodeId() *ChaincodeID {
+ 	if m != nil {
+ 		return m.ChaincodeId
+@@ -185,13 +154,6 @@ func (m *ChaincodeSpec) GetInput() *ChaincodeInput {
+ 	return nil
+ }
+ 
+-func (m *ChaincodeSpec) GetTimeout() int32 {
+-	if m != nil {
+-		return m.Timeout
+-	}
+-	return 0
+-}
+-
+ // Specify the deployment of a chaincode.
+ // TODO: Define `codePackage`.
+ type ChaincodeDeploymentSpec struct {
+@@ -221,20 +183,6 @@ func (m *ChaincodeDeploymentSpec) GetEffectiveDate() *google_protobuf1.Timestamp
+ 	return nil
+ }
+ 
+-func (m *ChaincodeDeploymentSpec) GetCodePackage() []byte {
+-	if m != nil {
+-		return m.CodePackage
+-	}
+-	return nil
+-}
+-
+-func (m *ChaincodeDeploymentSpec) GetExecEnv() ChaincodeDeploymentSpec_ExecutionEnvironment {
+-	if m != nil {
+-		return m.ExecEnv
+-	}
+-	return ChaincodeDeploymentSpec_DOCKER
+-}
+-
+ // Carries the chaincode function and its arguments.
+ type ChaincodeInvocationSpec struct {
+ 	ChaincodeSpec *ChaincodeSpec `protobuf:"bytes,1,opt,name=chaincode_spec,json=chaincodeSpec" json:"chaincode_spec,omitempty"`
+@@ -260,13 +208,6 @@ func (m *ChaincodeInvocationSpec) GetChaincodeSpec() *ChaincodeSpec {
+ 	return nil
+ }
+ 
+-func (m *ChaincodeInvocationSpec) GetIdGenerationAlg() string {
+-	if m != nil {
+-		return m.IdGenerationAlg
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ChaincodeID)(nil), "protos.ChaincodeID")
+ 	proto.RegisterType((*ChaincodeInput)(nil), "protos.ChaincodeInput")
+@@ -281,42 +222,43 @@ func init() {
+ func init() { proto.RegisterFile("peer/chaincode.proto", fileDescriptor1) }
+ 
+ var fileDescriptor1 = []byte{
+-	// 591 bytes of a gzipped FileDescriptorProto
+-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xac, 0x93, 0x5d, 0x6f, 0xd3, 0x3e,
+-	0x14, 0xc6, 0x97, 0xb5, 0x7b, 0x3b, 0x7d, 0xf9, 0xe7, 0x6f, 0x06, 0x54, 0xbb, 0x61, 0x44, 0x5c,
+-	0x8c, 0x09, 0xa5, 0x52, 0x99, 0xb8, 0x42, 0x48, 0x59, 0x93, 0x4d, 0x81, 0xd2, 0x4c, 0x59, 0x87,
+-	0x04, 0x37, 0x95, 0x9b, 0x9c, 0xa6, 0x16, 0xa9, 0x1d, 0x25, 0x6e, 0xb4, 0x5e, 0xf3, 0xbd, 0xf8,
+-	0x6a, 0x20, 0x3b, 0x6b, 0xb7, 0xa9, 0xbb, 0xe4, 0x2a, 0xf6, 0x93, 0xe7, 0xd8, 0xcf, 0xf9, 0xe9,
+-	0x18, 0x0e, 0x33, 0xc4, 0xbc, 0x1b, 0xcd, 0x28, 0xe3, 0x91, 0x88, 0xd1, 0xce, 0x72, 0x21, 0x05,
+-	0xd9, 0xd5, 0x9f, 0xe2, 0xe8, 0x55, 0x22, 0x44, 0x92, 0x62, 0x57, 0x6f, 0x27, 0x8b, 0x69, 0x57,
+-	0xb2, 0x39, 0x16, 0x92, 0xce, 0xb3, 0xca, 0x68, 0x05, 0xd0, 0xe8, 0xaf, 0x6a, 0x7d, 0x97, 0x10,
+-	0xa8, 0x67, 0x54, 0xce, 0x3a, 0xc6, 0xb1, 0x71, 0x72, 0x10, 0xea, 0xb5, 0xd2, 0x38, 0x9d, 0x63,
+-	0x67, 0xbb, 0xd2, 0xd4, 0x9a, 0x74, 0x60, 0xaf, 0xc4, 0xbc, 0x60, 0x82, 0x77, 0x6a, 0x5a, 0x5e,
+-	0x6d, 0xad, 0x37, 0xd0, 0xbe, 0x3f, 0x90, 0x67, 0x0b, 0xa9, 0xea, 0x69, 0x9e, 0x14, 0x1d, 0xe3,
+-	0xb8, 0x76, 0xd2, 0x0c, 0xf5, 0xda, 0xfa, 0x63, 0x40, 0x6b, 0x6d, 0xbb, 0xce, 0x30, 0x22, 0x36,
+-	0xd4, 0xe5, 0x32, 0x43, 0x7d, 0x73, 0xbb, 0x77, 0x54, 0xc5, 0x2b, 0xec, 0x47, 0x26, 0x7b, 0xb4,
+-	0xcc, 0x30, 0xd4, 0x3e, 0xf2, 0x01, 0x9a, 0xeb, 0xa6, 0xc7, 0x2c, 0xd6, 0xe9, 0x1a, 0xbd, 0x67,
+-	0x1b, 0x75, 0xbe, 0x1b, 0x36, 0xd6, 0x46, 0x3f, 0x26, 0xef, 0x60, 0x87, 0xa9, 0x58, 0x3a, 0x77,
+-	0xa3, 0xf7, 0x62, 0xb3, 0x40, 0xfd, 0x0d, 0x2b, 0x93, 0xea, 0x53, 0x11, 0x13, 0x0b, 0xd9, 0xa9,
+-	0x1f, 0x1b, 0x27, 0x3b, 0xe1, 0x6a, 0x6b, 0x7d, 0x82, 0xba, 0x4a, 0x43, 0x5a, 0x70, 0x70, 0x33,
+-	0x74, 0xbd, 0x0b, 0x7f, 0xe8, 0xb9, 0xe6, 0x16, 0x01, 0xd8, 0xbd, 0x0c, 0x06, 0xce, 0xf0, 0xd2,
+-	0x34, 0xc8, 0x3e, 0xd4, 0x87, 0x81, 0xeb, 0x99, 0xdb, 0x64, 0x0f, 0x6a, 0x7d, 0x27, 0x34, 0x6b,
+-	0x4a, 0xfa, 0xec, 0x7c, 0x73, 0xcc, 0xba, 0xf5, 0x7b, 0x1b, 0x5e, 0xae, 0xef, 0x74, 0x31, 0x4b,
+-	0xc5, 0x72, 0x8e, 0x5c, 0x6a, 0x16, 0x1f, 0xa1, 0x7d, 0xdf, 0x5b, 0x91, 0x61, 0xa4, 0xa9, 0x34,
+-	0x7a, 0xcf, 0x9f, 0xa4, 0x12, 0xb6, 0xa2, 0x47, 0x24, 0x1d, 0x68, 0xe3, 0x74, 0x8a, 0x91, 0x64,
+-	0x25, 0x8e, 0x63, 0x2a, 0xf1, 0x8e, 0xcd, 0x91, 0x5d, 0x0d, 0x83, 0xbd, 0x1a, 0x06, 0x7b, 0xb4,
+-	0x1a, 0x86, 0xb0, 0xb5, 0xae, 0x70, 0xa9, 0x44, 0xf2, 0x1a, 0x9a, 0xfa, 0xee, 0x8c, 0x46, 0x3f,
+-	0x69, 0x82, 0x9a, 0x55, 0x33, 0x6c, 0x28, 0xed, 0xaa, 0x92, 0x48, 0x00, 0xfb, 0x78, 0x8b, 0xd1,
+-	0x18, 0x79, 0xa9, 0xd1, 0xb4, 0x7b, 0x67, 0x1b, 0xe9, 0x1e, 0xb7, 0x65, 0x7b, 0xb7, 0x18, 0x2d,
+-	0x24, 0x13, 0xdc, 0xe3, 0x25, 0xcb, 0x05, 0x57, 0x3f, 0xc2, 0x3d, 0x75, 0x8a, 0xc7, 0x4b, 0xcb,
+-	0x86, 0xc3, 0xa7, 0x0c, 0x8a, 0xa8, 0x1b, 0xf4, 0xbf, 0x78, 0x61, 0x45, 0xf7, 0xfa, 0xfb, 0xf5,
+-	0xc8, 0xfb, 0x6a, 0x1a, 0xd6, 0x2f, 0xe3, 0x01, 0x40, 0x9f, 0x97, 0x22, 0xa2, 0xaa, 0xf4, 0x1f,
+-	0x00, 0x3c, 0x85, 0xff, 0x59, 0x3c, 0x4e, 0x90, 0x63, 0xae, 0x8f, 0x1c, 0xd3, 0x34, 0xb9, 0x9b,
+-	0xfe, 0xff, 0x58, 0x7c, 0xb9, 0xd6, 0x9d, 0x34, 0x39, 0x3d, 0x83, 0xc3, 0xbe, 0xe0, 0x53, 0x16,
+-	0x23, 0x97, 0x8c, 0xa6, 0x4c, 0x2e, 0x07, 0x58, 0x62, 0xaa, 0x92, 0x5e, 0xdd, 0x9c, 0x0f, 0xfc,
+-	0xbe, 0xb9, 0x45, 0x4c, 0x68, 0xf6, 0x83, 0xe1, 0x85, 0xef, 0x7a, 0xc3, 0x91, 0xef, 0x0c, 0x4c,
+-	0xe3, 0x3c, 0x00, 0x4b, 0xe4, 0x89, 0x3d, 0x5b, 0x66, 0x98, 0xa7, 0x18, 0x27, 0x98, 0xdb, 0x53,
+-	0x3a, 0xc9, 0x59, 0xb4, 0xca, 0xa7, 0x1e, 0xf5, 0x8f, 0xb7, 0x09, 0x93, 0xb3, 0xc5, 0xc4, 0x8e,
+-	0xc4, 0xbc, 0xfb, 0xc0, 0xda, 0xad, 0xac, 0xd5, 0x9b, 0x2e, 0xba, 0xca, 0x3a, 0xa9, 0xde, 0xfb,
+-	0xfb, 0xbf, 0x01, 0x00, 0x00, 0xff, 0xff, 0x05, 0x18, 0x06, 0x44, 0x0e, 0x04, 0x00, 0x00,
++	// 602 bytes of a gzipped FileDescriptorProto
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xac, 0x53, 0x4d, 0x6f, 0x9b, 0x4a,
++	0x14, 0x0d, 0xb6, 0xf3, 0x75, 0xfd, 0xf1, 0x78, 0xf3, 0xf2, 0x5a, 0x2b, 0x9b, 0xa6, 0xa8, 0x8b,
++	0x34, 0xaa, 0xb0, 0xe4, 0x46, 0x5d, 0x75, 0x43, 0x80, 0x44, 0xb4, 0x2e, 0x44, 0xd8, 0xa9, 0xd4,
++	0x6e, 0x2c, 0x0c, 0xd7, 0x78, 0x54, 0x3c, 0x83, 0x60, 0x8c, 0xe2, 0x75, 0x7f, 0x40, 0xff, 0x51,
++	0x7f, 0x5b, 0x35, 0x43, 0xec, 0x24, 0x4a, 0x96, 0x5d, 0x71, 0xe7, 0x70, 0xce, 0xcc, 0xb9, 0x47,
++	0xf7, 0xc2, 0x51, 0x8e, 0x58, 0x0c, 0xe2, 0x45, 0x44, 0x59, 0xcc, 0x13, 0x34, 0xf3, 0x82, 0x0b,
++	0x4e, 0xf6, 0xd4, 0xa7, 0x3c, 0x7e, 0x95, 0x72, 0x9e, 0x66, 0x38, 0x50, 0xc7, 0xd9, 0x6a, 0x3e,
++	0x10, 0x74, 0x89, 0xa5, 0x88, 0x96, 0x79, 0x4d, 0x34, 0x02, 0x68, 0xdb, 0x1b, 0xad, 0xe7, 0x10,
++	0x02, 0xad, 0x3c, 0x12, 0x8b, 0xbe, 0x76, 0xa2, 0x9d, 0x1e, 0x86, 0xaa, 0x96, 0x18, 0x8b, 0x96,
++	0xd8, 0x6f, 0xd4, 0x98, 0xac, 0x49, 0x1f, 0xf6, 0x2b, 0x2c, 0x4a, 0xca, 0x59, 0xbf, 0xa9, 0xe0,
++	0xcd, 0xd1, 0x78, 0x03, 0xbd, 0xfb, 0x0b, 0x59, 0xbe, 0x12, 0x52, 0x1f, 0x15, 0x69, 0xd9, 0xd7,
++	0x4e, 0x9a, 0xa7, 0x9d, 0x50, 0xd5, 0xc6, 0xaf, 0x06, 0x74, 0xb7, 0xb4, 0x71, 0x8e, 0x31, 0x31,
++	0xa1, 0x25, 0xd6, 0x39, 0xaa, 0x97, 0x7b, 0xc3, 0xe3, 0xda, 0x5e, 0x69, 0x3e, 0x22, 0x99, 0x93,
++	0x75, 0x8e, 0xa1, 0xe2, 0x91, 0x0f, 0xd0, 0xd9, 0x36, 0x3d, 0xa5, 0x89, 0x72, 0xd7, 0x1e, 0xfe,
++	0xf7, 0x44, 0xe7, 0x39, 0x61, 0x7b, 0x4b, 0xf4, 0x12, 0xf2, 0x0e, 0x76, 0xa9, 0xb4, 0xa5, 0x7c,
++	0xb7, 0x87, 0x2f, 0x9e, 0x0a, 0xe4, 0xdf, 0xb0, 0x26, 0xc9, 0x3e, 0x65, 0x62, 0x7c, 0x25, 0xfa,
++	0xad, 0x13, 0xed, 0x74, 0x37, 0xdc, 0x1c, 0x0d, 0x1f, 0x5a, 0xd2, 0x0d, 0xe9, 0xc2, 0xe1, 0x8d,
++	0xef, 0xb8, 0x97, 0x9e, 0xef, 0x3a, 0xfa, 0x0e, 0x01, 0xd8, 0xbb, 0x0a, 0x46, 0x96, 0x7f, 0xa5,
++	0x6b, 0xe4, 0x00, 0x5a, 0x7e, 0xe0, 0xb8, 0x7a, 0x83, 0xec, 0x43, 0xd3, 0xb6, 0x42, 0xbd, 0x29,
++	0xa1, 0x4f, 0xd6, 0x57, 0x4b, 0x6f, 0x91, 0x1e, 0x80, 0xac, 0xc6, 0x76, 0xe8, 0x5d, 0x4f, 0xf4,
++	0x5d, 0xe3, 0x77, 0x03, 0x5e, 0x6e, 0x3d, 0x38, 0x98, 0x67, 0x7c, 0xbd, 0x44, 0x26, 0x54, 0x36,
++	0x1f, 0xa1, 0x77, 0xdf, 0x6b, 0x99, 0x63, 0xac, 0x52, 0x6a, 0x0f, 0xff, 0x7f, 0x36, 0xa5, 0xb0,
++	0x1b, 0x3f, 0x4a, 0xd6, 0x82, 0x1e, 0xce, 0xe7, 0x18, 0x0b, 0x5a, 0xe1, 0x34, 0x89, 0x04, 0xde,
++	0x65, 0x75, 0x6c, 0xd6, 0xc3, 0x61, 0x6e, 0x86, 0xc3, 0x9c, 0x6c, 0x86, 0x23, 0xec, 0x6e, 0x15,
++	0x4e, 0x24, 0x90, 0xbc, 0x86, 0x8e, 0x7a, 0x3b, 0x8f, 0xe2, 0x1f, 0x51, 0x8a, 0x2a, 0xbb, 0x4e,
++	0xd8, 0x96, 0xd8, 0x75, 0x0d, 0x91, 0x00, 0x0e, 0xf0, 0x16, 0xe3, 0x29, 0xb2, 0x4a, 0x45, 0xd5,
++	0x1b, 0x9e, 0x3f, 0x71, 0xf7, 0xb8, 0x2d, 0xd3, 0xbd, 0xc5, 0x78, 0x25, 0x28, 0x67, 0x2e, 0xab,
++	0x68, 0xc1, 0x99, 0xfc, 0x11, 0xee, 0xcb, 0x5b, 0x5c, 0x56, 0x19, 0x26, 0x1c, 0x3d, 0x47, 0x90,
++	0x09, 0x3b, 0x81, 0xfd, 0xd9, 0x0d, 0xeb, 0xb4, 0xc7, 0xdf, 0xc6, 0x13, 0xf7, 0x8b, 0xae, 0x19,
++	0x3f, 0xb5, 0x07, 0x01, 0x7a, 0xac, 0xe2, 0x71, 0x24, 0xa5, 0x7f, 0x21, 0xc0, 0x33, 0xf8, 0x97,
++	0x26, 0xd3, 0x14, 0x19, 0x16, 0xea, 0xca, 0x69, 0x94, 0xa5, 0x77, 0xdb, 0xf0, 0x0f, 0x4d, 0xae,
++	0xb6, 0xb8, 0x95, 0xa5, 0x67, 0xe7, 0x70, 0x64, 0x73, 0x36, 0xa7, 0x09, 0x32, 0x41, 0xa3, 0x8c,
++	0x8a, 0xf5, 0x08, 0x2b, 0xcc, 0xa4, 0xd3, 0xeb, 0x9b, 0x8b, 0x91, 0x67, 0xeb, 0x3b, 0x44, 0x87,
++	0x8e, 0x1d, 0xf8, 0x97, 0x9e, 0xe3, 0xfa, 0x13, 0xcf, 0x1a, 0xe9, 0xda, 0x45, 0x00, 0x06, 0x2f,
++	0x52, 0x73, 0xb1, 0xce, 0xb1, 0xc8, 0x30, 0x49, 0xb1, 0x30, 0xe7, 0xd1, 0xac, 0xa0, 0xf1, 0xc6,
++	0x9f, 0x5c, 0xf2, 0xef, 0x6f, 0x53, 0x2a, 0x16, 0xab, 0x99, 0x19, 0xf3, 0xe5, 0xe0, 0x01, 0x75,
++	0x50, 0x53, 0xeb, 0x1d, 0x2f, 0x07, 0x92, 0x3a, 0xab, 0xf7, 0xff, 0xfd, 0x9f, 0x00, 0x00, 0x00,
++	0xff, 0xff, 0xf4, 0x73, 0x6e, 0x76, 0x1e, 0x04, 0x00, 0x00,
+ }
+diff --git a/protos/peer/chaincode.proto b/protos/peer/chaincode.proto
+index ec6e1bb..22c3ad1 100644
+--- a/protos/peer/chaincode.proto
++++ b/protos/peer/chaincode.proto
+@@ -65,6 +65,7 @@ message ChaincodeSpec {
+         NODE = 2;
+         CAR = 3;
+         JAVA = 4;
++        JAVASCRIPT = 5;
+     }
+ 
+     Type type = 1;
+diff --git a/protos/peer/chaincode_event.pb.go b/protos/peer/chaincode_event.pb.go
+index 9349492..169c03d 100644
+--- a/protos/peer/chaincode_event.pb.go
++++ b/protos/peer/chaincode_event.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/chaincode_event.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -26,34 +27,6 @@ func (m *ChaincodeEvent) String() string            { return proto.CompactTextSt
+ func (*ChaincodeEvent) ProtoMessage()               {}
+ func (*ChaincodeEvent) Descriptor() ([]byte, []int) { return fileDescriptor2, []int{0} }
+ 
+-func (m *ChaincodeEvent) GetChaincodeId() string {
+-	if m != nil {
+-		return m.ChaincodeId
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeEvent) GetTxId() string {
+-	if m != nil {
+-		return m.TxId
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeEvent) GetEventName() string {
+-	if m != nil {
+-		return m.EventName
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeEvent) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ChaincodeEvent)(nil), "protos.ChaincodeEvent")
+ }
+diff --git a/protos/peer/chaincode_shim.pb.go b/protos/peer/chaincode_shim.pb.go
+index b10f5f3..3bb168b 100644
+--- a/protos/peer/chaincode_shim.pb.go
++++ b/protos/peer/chaincode_shim.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/chaincode_shim.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -107,13 +108,6 @@ func (m *ChaincodeMessage) String() string            { return proto.CompactText
+ func (*ChaincodeMessage) ProtoMessage()               {}
+ func (*ChaincodeMessage) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{0} }
+ 
+-func (m *ChaincodeMessage) GetType() ChaincodeMessage_Type {
+-	if m != nil {
+-		return m.Type
+-	}
+-	return ChaincodeMessage_UNDEFINED
+-}
+-
+ func (m *ChaincodeMessage) GetTimestamp() *google_protobuf1.Timestamp {
+ 	if m != nil {
+ 		return m.Timestamp
+@@ -121,20 +115,6 @@ func (m *ChaincodeMessage) GetTimestamp() *google_protobuf1.Timestamp {
+ 	return nil
+ }
+ 
+-func (m *ChaincodeMessage) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+-func (m *ChaincodeMessage) GetTxid() string {
+-	if m != nil {
+-		return m.Txid
+-	}
+-	return ""
+-}
+-
+ func (m *ChaincodeMessage) GetProposal() *SignedProposal {
+ 	if m != nil {
+ 		return m.Proposal
+@@ -159,20 +139,6 @@ func (m *PutStateInfo) String() string            { return proto.CompactTextStri
+ func (*PutStateInfo) ProtoMessage()               {}
+ func (*PutStateInfo) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{1} }
+ 
+-func (m *PutStateInfo) GetKey() string {
+-	if m != nil {
+-		return m.Key
+-	}
+-	return ""
+-}
+-
+-func (m *PutStateInfo) GetValue() []byte {
+-	if m != nil {
+-		return m.Value
+-	}
+-	return nil
+-}
+-
+ type GetStateByRange struct {
+ 	StartKey string `protobuf:"bytes,1,opt,name=startKey" json:"startKey,omitempty"`
+ 	EndKey   string `protobuf:"bytes,2,opt,name=endKey" json:"endKey,omitempty"`
+@@ -183,20 +149,6 @@ func (m *GetStateByRange) String() string            { return proto.CompactTextS
+ func (*GetStateByRange) ProtoMessage()               {}
+ func (*GetStateByRange) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{2} }
+ 
+-func (m *GetStateByRange) GetStartKey() string {
+-	if m != nil {
+-		return m.StartKey
+-	}
+-	return ""
+-}
+-
+-func (m *GetStateByRange) GetEndKey() string {
+-	if m != nil {
+-		return m.EndKey
+-	}
+-	return ""
+-}
+-
+ type GetQueryResult struct {
+ 	Query string `protobuf:"bytes,1,opt,name=query" json:"query,omitempty"`
+ }
+@@ -206,13 +158,6 @@ func (m *GetQueryResult) String() string            { return proto.CompactTextSt
+ func (*GetQueryResult) ProtoMessage()               {}
+ func (*GetQueryResult) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{3} }
+ 
+-func (m *GetQueryResult) GetQuery() string {
+-	if m != nil {
+-		return m.Query
+-	}
+-	return ""
+-}
+-
+ type GetHistoryForKey struct {
+ 	Key string `protobuf:"bytes,1,opt,name=key" json:"key,omitempty"`
+ }
+@@ -222,13 +167,6 @@ func (m *GetHistoryForKey) String() string            { return proto.CompactText
+ func (*GetHistoryForKey) ProtoMessage()               {}
+ func (*GetHistoryForKey) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{4} }
+ 
+-func (m *GetHistoryForKey) GetKey() string {
+-	if m != nil {
+-		return m.Key
+-	}
+-	return ""
+-}
+-
+ type QueryStateNext struct {
+ 	Id string `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+ }
+@@ -238,13 +176,6 @@ func (m *QueryStateNext) String() string            { return proto.CompactTextSt
+ func (*QueryStateNext) ProtoMessage()               {}
+ func (*QueryStateNext) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{5} }
+ 
+-func (m *QueryStateNext) GetId() string {
+-	if m != nil {
+-		return m.Id
+-	}
+-	return ""
+-}
+-
+ type QueryStateClose struct {
+ 	Id string `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+ }
+@@ -254,13 +185,6 @@ func (m *QueryStateClose) String() string            { return proto.CompactTextS
+ func (*QueryStateClose) ProtoMessage()               {}
+ func (*QueryStateClose) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{6} }
+ 
+-func (m *QueryStateClose) GetId() string {
+-	if m != nil {
+-		return m.Id
+-	}
+-	return ""
+-}
+-
+ type QueryResultBytes struct {
+ 	ResultBytes []byte `protobuf:"bytes,1,opt,name=resultBytes,proto3" json:"resultBytes,omitempty"`
+ }
+@@ -270,13 +194,6 @@ func (m *QueryResultBytes) String() string            { return proto.CompactText
+ func (*QueryResultBytes) ProtoMessage()               {}
+ func (*QueryResultBytes) Descriptor() ([]byte, []int) { return fileDescriptor3, []int{7} }
+ 
+-func (m *QueryResultBytes) GetResultBytes() []byte {
+-	if m != nil {
+-		return m.ResultBytes
+-	}
+-	return nil
+-}
+-
+ type QueryResponse struct {
+ 	Results []*QueryResultBytes `protobuf:"bytes,1,rep,name=results" json:"results,omitempty"`
+ 	HasMore bool                `protobuf:"varint,2,opt,name=has_more,json=hasMore" json:"has_more,omitempty"`
+@@ -295,20 +212,6 @@ func (m *QueryResponse) GetResults() []*QueryResultBytes {
+ 	return nil
+ }
+ 
+-func (m *QueryResponse) GetHasMore() bool {
+-	if m != nil {
+-		return m.HasMore
+-	}
+-	return false
+-}
+-
+-func (m *QueryResponse) GetId() string {
+-	if m != nil {
+-		return m.Id
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*ChaincodeMessage)(nil), "protos.ChaincodeMessage")
+ 	proto.RegisterType((*PutStateInfo)(nil), "protos.PutStateInfo")
+@@ -328,7 +231,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for ChaincodeSupport service
+ 
+@@ -423,7 +326,7 @@ var _ChaincodeSupport_serviceDesc = grpc.ServiceDesc{
+ 			ClientStreams: true,
+ 		},
+ 	},
+-	Metadata: "peer/chaincode_shim.proto",
++	Metadata: fileDescriptor3,
+ }
+ 
+ func init() { proto.RegisterFile("peer/chaincode_shim.proto", fileDescriptor3) }
+diff --git a/protos/peer/configuration.pb.go b/protos/peer/configuration.pb.go
+index b4dcbbe..408c535 100644
+--- a/protos/peer/configuration.pb.go
++++ b/protos/peer/configuration.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/configuration.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -43,20 +44,6 @@ func (m *AnchorPeer) String() string            { return proto.CompactTextString
+ func (*AnchorPeer) ProtoMessage()               {}
+ func (*AnchorPeer) Descriptor() ([]byte, []int) { return fileDescriptor4, []int{1} }
+ 
+-func (m *AnchorPeer) GetHost() string {
+-	if m != nil {
+-		return m.Host
+-	}
+-	return ""
+-}
+-
+-func (m *AnchorPeer) GetPort() int32 {
+-	if m != nil {
+-		return m.Port
+-	}
+-	return 0
+-}
+-
+ func init() {
+ 	proto.RegisterType((*AnchorPeers)(nil), "protos.AnchorPeers")
+ 	proto.RegisterType((*AnchorPeer)(nil), "protos.AnchorPeer")
+diff --git a/protos/peer/container.pb.go b/protos/peer/container.pb.go
+new file mode 100644
+index 0000000..44aa0a3
+--- /dev/null
++++ b/protos/peer/container.pb.go
+@@ -0,0 +1,308 @@
++// Code generated by protoc-gen-go.
++// source: peer/container.proto
++// DO NOT EDIT!
++
++package peer
++
++import proto "github.com/golang/protobuf/proto"
++import fmt "fmt"
++import math "math"
++import google_protobuf1 "github.com/golang/protobuf/ptypes/timestamp"
++
++import (
++	context "golang.org/x/net/context"
++	grpc "google.golang.org/grpc"
++)
++
++// Reference imports to suppress errors if they are not otherwise used.
++var _ = proto.Marshal
++var _ = fmt.Errorf
++var _ = math.Inf
++
++type ContainerMessage_Type int32
++
++const (
++	ContainerMessage_BUILD_IMAGE           ContainerMessage_Type = 0
++	ContainerMessage_CREATE_CONTAINER      ContainerMessage_Type = 1
++	ContainerMessage_START_CONTAINER       ContainerMessage_Type = 2
++	ContainerMessage_ATTACH_TO_CONTAINER   ContainerMessage_Type = 3
++	ContainerMessage_STOP_CONTAINER        ContainerMessage_Type = 4
++	ContainerMessage_KILL_CONTAINER        ContainerMessage_Type = 5
++	ContainerMessage_REMOVE_CONTAINER      ContainerMessage_Type = 6
++	ContainerMessage_REMOVE_IMAGE_EXTENDED ContainerMessage_Type = 7
++	ContainerMessage_RESPONSE              ContainerMessage_Type = 8
++	ContainerMessage_ERROR                 ContainerMessage_Type = 9
++)
++
++var ContainerMessage_Type_name = map[int32]string{
++	0: "BUILD_IMAGE",
++	1: "CREATE_CONTAINER",
++	2: "START_CONTAINER",
++	3: "ATTACH_TO_CONTAINER",
++	4: "STOP_CONTAINER",
++	5: "KILL_CONTAINER",
++	6: "REMOVE_CONTAINER",
++	7: "REMOVE_IMAGE_EXTENDED",
++	8: "RESPONSE",
++	9: "ERROR",
++}
++var ContainerMessage_Type_value = map[string]int32{
++	"BUILD_IMAGE":           0,
++	"CREATE_CONTAINER":      1,
++	"START_CONTAINER":       2,
++	"ATTACH_TO_CONTAINER":   3,
++	"STOP_CONTAINER":        4,
++	"KILL_CONTAINER":        5,
++	"REMOVE_CONTAINER":      6,
++	"REMOVE_IMAGE_EXTENDED": 7,
++	"RESPONSE":              8,
++	"ERROR":                 9,
++}
++
++func (x ContainerMessage_Type) String() string {
++	return proto.EnumName(ContainerMessage_Type_name, int32(x))
++}
++func (ContainerMessage_Type) EnumDescriptor() ([]byte, []int) { return fileDescriptor5, []int{0, 0} }
++
++type ContainerMessage struct {
++	Type      ContainerMessage_Type       `protobuf:"varint,1,opt,name=type,enum=protos.ContainerMessage_Type" json:"type,omitempty"`
++	Timestamp *google_protobuf1.Timestamp `protobuf:"bytes,2,opt,name=timestamp" json:"timestamp,omitempty"`
++	Payload   []byte                      `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
++}
++
++func (m *ContainerMessage) Reset()                    { *m = ContainerMessage{} }
++func (m *ContainerMessage) String() string            { return proto.CompactTextString(m) }
++func (*ContainerMessage) ProtoMessage()               {}
++func (*ContainerMessage) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{0} }
++
++func (m *ContainerMessage) GetTimestamp() *google_protobuf1.Timestamp {
++	if m != nil {
++		return m.Timestamp
++	}
++	return nil
++}
++
++type BuildImageReq struct {
++	Name       string `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
++	InputBytes []byte `protobuf:"bytes,2,opt,name=inputBytes,proto3" json:"inputBytes,omitempty"`
++}
++
++func (m *BuildImageReq) Reset()                    { *m = BuildImageReq{} }
++func (m *BuildImageReq) String() string            { return proto.CompactTextString(m) }
++func (*BuildImageReq) ProtoMessage()               {}
++func (*BuildImageReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{1} }
++
++type CreateContainerReq struct {
++	Name string `protobuf:"bytes,1,opt,name=name" json:"name,omitempty"`
++}
++
++func (m *CreateContainerReq) Reset()                    { *m = CreateContainerReq{} }
++func (m *CreateContainerReq) String() string            { return proto.CompactTextString(m) }
++func (*CreateContainerReq) ProtoMessage()               {}
++func (*CreateContainerReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{2} }
++
++type StartContainerReq struct {
++	ContainerID string `protobuf:"bytes,1,opt,name=containerID" json:"containerID,omitempty"`
++}
++
++func (m *StartContainerReq) Reset()                    { *m = StartContainerReq{} }
++func (m *StartContainerReq) String() string            { return proto.CompactTextString(m) }
++func (*StartContainerReq) ProtoMessage()               {}
++func (*StartContainerReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{3} }
++
++type StopContainerReq struct {
++	ContainerID string `protobuf:"bytes,1,opt,name=containerID" json:"containerID,omitempty"`
++	Timeout     int32  `protobuf:"varint,2,opt,name=timeout" json:"timeout,omitempty"`
++}
++
++func (m *StopContainerReq) Reset()                    { *m = StopContainerReq{} }
++func (m *StopContainerReq) String() string            { return proto.CompactTextString(m) }
++func (*StopContainerReq) ProtoMessage()               {}
++func (*StopContainerReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{4} }
++
++type KillContainerReq struct {
++	ContainerID string `protobuf:"bytes,1,opt,name=containerID" json:"containerID,omitempty"`
++}
++
++func (m *KillContainerReq) Reset()                    { *m = KillContainerReq{} }
++func (m *KillContainerReq) String() string            { return proto.CompactTextString(m) }
++func (*KillContainerReq) ProtoMessage()               {}
++func (*KillContainerReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{5} }
++
++type RemoveContainerReq struct {
++	ContainerID string `protobuf:"bytes,1,opt,name=containerID" json:"containerID,omitempty"`
++	Force       bool   `protobuf:"varint,2,opt,name=force" json:"force,omitempty"`
++}
++
++func (m *RemoveContainerReq) Reset()                    { *m = RemoveContainerReq{} }
++func (m *RemoveContainerReq) String() string            { return proto.CompactTextString(m) }
++func (*RemoveContainerReq) ProtoMessage()               {}
++func (*RemoveContainerReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{6} }
++
++type RemoveImageExtendedReq struct {
++	ContainerID string `protobuf:"bytes,1,opt,name=containerID" json:"containerID,omitempty"`
++	Force       bool   `protobuf:"varint,2,opt,name=force" json:"force,omitempty"`
++	NoPrune     bool   `protobuf:"varint,3,opt,name=noPrune" json:"noPrune,omitempty"`
++}
++
++func (m *RemoveImageExtendedReq) Reset()                    { *m = RemoveImageExtendedReq{} }
++func (m *RemoveImageExtendedReq) String() string            { return proto.CompactTextString(m) }
++func (*RemoveImageExtendedReq) ProtoMessage()               {}
++func (*RemoveImageExtendedReq) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{7} }
++
++func init() {
++	proto.RegisterType((*ContainerMessage)(nil), "protos.ContainerMessage")
++	proto.RegisterType((*BuildImageReq)(nil), "protos.BuildImageReq")
++	proto.RegisterType((*CreateContainerReq)(nil), "protos.CreateContainerReq")
++	proto.RegisterType((*StartContainerReq)(nil), "protos.StartContainerReq")
++	proto.RegisterType((*StopContainerReq)(nil), "protos.StopContainerReq")
++	proto.RegisterType((*KillContainerReq)(nil), "protos.KillContainerReq")
++	proto.RegisterType((*RemoveContainerReq)(nil), "protos.RemoveContainerReq")
++	proto.RegisterType((*RemoveImageExtendedReq)(nil), "protos.RemoveImageExtendedReq")
++	proto.RegisterEnum("protos.ContainerMessage_Type", ContainerMessage_Type_name, ContainerMessage_Type_value)
++}
++
++// Reference imports to suppress errors if they are not otherwise used.
++var _ context.Context
++var _ grpc.ClientConn
++
++// This is a compile-time assertion to ensure that this generated file
++// is compatible with the grpc package it is being compiled against.
++const _ = grpc.SupportPackageIsVersion3
++
++// Client API for ContainerSupport service
++
++type ContainerSupportClient interface {
++	Register(ctx context.Context, opts ...grpc.CallOption) (ContainerSupport_RegisterClient, error)
++}
++
++type containerSupportClient struct {
++	cc *grpc.ClientConn
++}
++
++func NewContainerSupportClient(cc *grpc.ClientConn) ContainerSupportClient {
++	return &containerSupportClient{cc}
++}
++
++func (c *containerSupportClient) Register(ctx context.Context, opts ...grpc.CallOption) (ContainerSupport_RegisterClient, error) {
++	stream, err := grpc.NewClientStream(ctx, &_ContainerSupport_serviceDesc.Streams[0], c.cc, "/protos.ContainerSupport/Register", opts...)
++	if err != nil {
++		return nil, err
++	}
++	x := &containerSupportRegisterClient{stream}
++	return x, nil
++}
++
++type ContainerSupport_RegisterClient interface {
++	Send(*ContainerMessage) error
++	Recv() (*ContainerMessage, error)
++	grpc.ClientStream
++}
++
++type containerSupportRegisterClient struct {
++	grpc.ClientStream
++}
++
++func (x *containerSupportRegisterClient) Send(m *ContainerMessage) error {
++	return x.ClientStream.SendMsg(m)
++}
++
++func (x *containerSupportRegisterClient) Recv() (*ContainerMessage, error) {
++	m := new(ContainerMessage)
++	if err := x.ClientStream.RecvMsg(m); err != nil {
++		return nil, err
++	}
++	return m, nil
++}
++
++// Server API for ContainerSupport service
++
++type ContainerSupportServer interface {
++	Register(ContainerSupport_RegisterServer) error
++}
++
++func RegisterContainerSupportServer(s *grpc.Server, srv ContainerSupportServer) {
++	s.RegisterService(&_ContainerSupport_serviceDesc, srv)
++}
++
++func _ContainerSupport_Register_Handler(srv interface{}, stream grpc.ServerStream) error {
++	return srv.(ContainerSupportServer).Register(&containerSupportRegisterServer{stream})
++}
++
++type ContainerSupport_RegisterServer interface {
++	Send(*ContainerMessage) error
++	Recv() (*ContainerMessage, error)
++	grpc.ServerStream
++}
++
++type containerSupportRegisterServer struct {
++	grpc.ServerStream
++}
++
++func (x *containerSupportRegisterServer) Send(m *ContainerMessage) error {
++	return x.ServerStream.SendMsg(m)
++}
++
++func (x *containerSupportRegisterServer) Recv() (*ContainerMessage, error) {
++	m := new(ContainerMessage)
++	if err := x.ServerStream.RecvMsg(m); err != nil {
++		return nil, err
++	}
++	return m, nil
++}
++
++var _ContainerSupport_serviceDesc = grpc.ServiceDesc{
++	ServiceName: "protos.ContainerSupport",
++	HandlerType: (*ContainerSupportServer)(nil),
++	Methods:     []grpc.MethodDesc{},
++	Streams: []grpc.StreamDesc{
++		{
++			StreamName:    "Register",
++			Handler:       _ContainerSupport_Register_Handler,
++			ServerStreams: true,
++			ClientStreams: true,
++		},
++	},
++	Metadata: fileDescriptor5,
++}
++
++func init() { proto.RegisterFile("peer/container.proto", fileDescriptor5) }
++
++var fileDescriptor5 = []byte{
++	// 545 bytes of a gzipped FileDescriptorProto
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xa4, 0x94, 0xcd, 0x6e, 0xd3, 0x40,
++	0x10, 0xc7, 0xeb, 0x36, 0x69, 0x93, 0x69, 0x69, 0xcd, 0xb6, 0x40, 0xa8, 0x04, 0x44, 0x3e, 0x85,
++	0x8b, 0x0d, 0x05, 0x24, 0xae, 0x8e, 0xb3, 0x02, 0xab, 0x69, 0x1c, 0xad, 0x0d, 0xaa, 0xb8, 0x44,
++	0x4e, 0x32, 0x71, 0x8d, 0x6c, 0xaf, 0x59, 0xaf, 0x11, 0x79, 0x48, 0x1e, 0x84, 0xb7, 0x40, 0xb6,
++	0xeb, 0x60, 0x90, 0x72, 0x88, 0x38, 0x25, 0xf3, 0xdf, 0xdf, 0x7c, 0x78, 0x66, 0x77, 0xe0, 0x22,
++	0x45, 0x14, 0xc6, 0x82, 0x27, 0xd2, 0x0f, 0x13, 0x14, 0x7a, 0x2a, 0xb8, 0xe4, 0xe4, 0xb0, 0xfc,
++	0xc9, 0x2e, 0x5f, 0x04, 0x9c, 0x07, 0x11, 0x1a, 0xa5, 0x39, 0xcf, 0x57, 0x86, 0x0c, 0x63, 0xcc,
++	0xa4, 0x1f, 0xa7, 0x15, 0xa8, 0xfd, 0xda, 0x07, 0xd5, 0xaa, 0x9d, 0x6f, 0x30, 0xcb, 0xfc, 0x00,
++	0xc9, 0x6b, 0x68, 0xc9, 0x75, 0x8a, 0x3d, 0xa5, 0xaf, 0x0c, 0x4e, 0xaf, 0x9e, 0x55, 0x68, 0xa6,
++	0xff, 0xcb, 0xe9, 0xde, 0x3a, 0x45, 0x56, 0xa2, 0xe4, 0x3d, 0x74, 0x37, 0xa1, 0x7b, 0xfb, 0x7d,
++	0x65, 0x70, 0x7c, 0x75, 0xa9, 0x57, 0xc9, 0xf5, 0x3a, 0xb9, 0xee, 0xd5, 0x04, 0xfb, 0x03, 0x93,
++	0x1e, 0x1c, 0xa5, 0xfe, 0x3a, 0xe2, 0xfe, 0xb2, 0x77, 0xd0, 0x57, 0x06, 0x27, 0xac, 0x36, 0xb5,
++	0x9f, 0x0a, 0xb4, 0x8a, 0x14, 0xe4, 0x0c, 0x8e, 0x87, 0x9f, 0xec, 0xf1, 0x68, 0x66, 0xdf, 0x98,
++	0x1f, 0xa8, 0xba, 0x47, 0x2e, 0x40, 0xb5, 0x18, 0x35, 0x3d, 0x3a, 0xb3, 0x9c, 0x89, 0x67, 0xda,
++	0x13, 0xca, 0x54, 0x85, 0x9c, 0xc3, 0x99, 0xeb, 0x99, 0xcc, 0x6b, 0x88, 0xfb, 0xe4, 0x09, 0x9c,
++	0x9b, 0x9e, 0x67, 0x5a, 0x1f, 0x67, 0x9e, 0xd3, 0x38, 0x38, 0x20, 0x04, 0x4e, 0x5d, 0xcf, 0x99,
++	0x36, 0xb4, 0x56, 0xa1, 0x5d, 0xdb, 0xe3, 0x71, 0x43, 0x6b, 0x17, 0xb9, 0x18, 0xbd, 0x71, 0x3e,
++	0x37, 0x73, 0x1d, 0x92, 0xa7, 0xf0, 0xe8, 0x5e, 0x2d, 0x6b, 0x9a, 0xd1, 0x5b, 0x8f, 0x4e, 0x46,
++	0x74, 0xa4, 0x1e, 0x91, 0x13, 0xe8, 0x30, 0xea, 0x4e, 0x9d, 0x89, 0x4b, 0xd5, 0x0e, 0xe9, 0x42,
++	0x9b, 0x32, 0xe6, 0x30, 0xb5, 0xab, 0x59, 0xf0, 0x60, 0x98, 0x87, 0xd1, 0xd2, 0x8e, 0xfd, 0x00,
++	0x19, 0x7e, 0x23, 0x04, 0x5a, 0x89, 0x1f, 0x57, 0x7d, 0xee, 0xb2, 0xf2, 0x3f, 0x79, 0x0e, 0x10,
++	0x26, 0x69, 0x2e, 0x87, 0x6b, 0x89, 0x59, 0xd9, 0xc9, 0x13, 0xd6, 0x50, 0xb4, 0x01, 0x10, 0x4b,
++	0xa0, 0x2f, 0x71, 0x33, 0x8d, 0x2d, 0x91, 0xb4, 0x77, 0xf0, 0xd0, 0x95, 0xbe, 0x90, 0x7f, 0x81,
++	0x7d, 0x38, 0xde, 0xdc, 0x15, 0x7b, 0x74, 0xcf, 0x37, 0x25, 0x6d, 0x02, 0xaa, 0x2b, 0x79, 0xba,
++	0x9b, 0x57, 0x31, 0xc5, 0x62, 0xa4, 0x3c, 0x97, 0x65, 0xcd, 0x6d, 0x56, 0x9b, 0xda, 0x5b, 0x50,
++	0xaf, 0xc3, 0x28, 0xda, 0xb1, 0x8a, 0x31, 0x10, 0x86, 0x31, 0xff, 0x8e, 0x3b, 0xd6, 0x71, 0x01,
++	0xed, 0x15, 0x17, 0x0b, 0x2c, 0xab, 0xe8, 0xb0, 0xca, 0xd0, 0xbe, 0xc2, 0xe3, 0x2a, 0x5a, 0xd9,
++	0x7a, 0xfa, 0x43, 0x62, 0xb2, 0xc4, 0xe5, 0x7f, 0x44, 0x2c, 0xbe, 0x37, 0xe1, 0x53, 0x91, 0x27,
++	0x58, 0xde, 0xda, 0x0e, 0xab, 0xcd, 0xab, 0xdb, 0xc6, 0x83, 0x72, 0xf3, 0x34, 0xe5, 0x42, 0x92,
++	0x11, 0x74, 0x18, 0x06, 0x61, 0x26, 0x51, 0x90, 0xde, 0xb6, 0xe7, 0x74, 0xb9, 0xf5, 0x44, 0xdb,
++	0x1b, 0x28, 0xaf, 0x94, 0xa1, 0x03, 0x1a, 0x17, 0x81, 0x7e, 0xb7, 0x4e, 0x51, 0x44, 0xb8, 0x0c,
++	0x50, 0xe8, 0x2b, 0x7f, 0x2e, 0xc2, 0x45, 0xed, 0x57, 0xac, 0x82, 0x2f, 0x2f, 0x83, 0x50, 0xde,
++	0xe5, 0x73, 0x7d, 0xc1, 0x63, 0xa3, 0x81, 0x1a, 0x15, 0x5a, 0x6d, 0x82, 0xcc, 0x28, 0xd0, 0x79,
++	0xb5, 0x25, 0xde, 0xfc, 0x0e, 0x00, 0x00, 0xff, 0xff, 0x41, 0x10, 0x0c, 0x4f, 0x44, 0x04, 0x00,
++	0x00,
++}
+diff --git a/protos/peer/container.proto b/protos/peer/container.proto
+new file mode 100644
+index 0000000..d5a9f67
+--- /dev/null
++++ b/protos/peer/container.proto
+@@ -0,0 +1,84 @@
++/*
++Copyright IBM Corp. 2017 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++syntax = "proto3";
++
++option java_package = "org.hyperledger.fabric.protos.peer";
++option go_package = "github.com/hyperledger/fabric/protos/peer";
++
++package protos;
++import "google/protobuf/timestamp.proto";
++
++message ContainerMessage {
++
++    enum Type {
++        BUILD_IMAGE = 0;
++        CREATE_CONTAINER = 1;
++        START_CONTAINER = 2;
++        ATTACH_TO_CONTAINER = 3;
++        STOP_CONTAINER = 4;
++        KILL_CONTAINER = 5;
++        REMOVE_CONTAINER = 6;
++        REMOVE_IMAGE_EXTENDED = 7;
++        RESPONSE = 8;
++        ERROR = 9;
++    }
++
++    Type type = 1;
++    google.protobuf.Timestamp timestamp = 2;
++    bytes payload = 3;
++}
++
++message BuildImageReq {
++    string name = 1;
++    bytes inputBytes = 2;
++}
++
++message CreateContainerReq {
++    string name = 1;
++}
++
++message StartContainerReq {
++    string containerID = 1;
++}
++
++message StopContainerReq {
++    string containerID = 1;
++    int32 timeout = 2;
++}
++
++message KillContainerReq {
++    string containerID = 1;
++}
++
++message RemoveContainerReq {
++    string containerID = 1;
++    bool force = 2;
++}
++
++message RemoveImageExtendedReq {
++    string containerID = 1;
++    bool force = 2;
++    bool noPrune = 3;
++}
++
++// Interface that provides support to container management.
++service ContainerSupport {
++
++    rpc Register(stream ContainerMessage) returns (stream ContainerMessage) {}
++
++
++}
+diff --git a/protos/peer/events.pb.go b/protos/peer/events.pb.go
+index d2ec20d..f62952b 100644
+--- a/protos/peer/events.pb.go
++++ b/protos/peer/events.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/events.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -43,7 +44,7 @@ var EventType_value = map[string]int32{
+ func (x EventType) String() string {
+ 	return proto.EnumName(EventType_name, int32(x))
+ }
+-func (EventType) EnumDescriptor() ([]byte, []int) { return fileDescriptor5, []int{0} }
++func (EventType) EnumDescriptor() ([]byte, []int) { return fileDescriptor6, []int{0} }
+ 
+ // ChaincodeReg is used for registering chaincode Interests
+ // when EventType is CHAINCODE
+@@ -55,21 +56,7 @@ type ChaincodeReg struct {
+ func (m *ChaincodeReg) Reset()                    { *m = ChaincodeReg{} }
+ func (m *ChaincodeReg) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeReg) ProtoMessage()               {}
+-func (*ChaincodeReg) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{0} }
+-
+-func (m *ChaincodeReg) GetChaincodeId() string {
+-	if m != nil {
+-		return m.ChaincodeId
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeReg) GetEventName() string {
+-	if m != nil {
+-		return m.EventName
+-	}
+-	return ""
+-}
++func (*ChaincodeReg) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{0} }
+ 
+ type Interest struct {
+ 	EventType EventType `protobuf:"varint,1,opt,name=event_type,json=eventType,enum=protos.EventType" json:"event_type,omitempty"`
+@@ -87,7 +74,7 @@ type Interest struct {
+ func (m *Interest) Reset()                    { *m = Interest{} }
+ func (m *Interest) String() string            { return proto.CompactTextString(m) }
+ func (*Interest) ProtoMessage()               {}
+-func (*Interest) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{1} }
++func (*Interest) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{1} }
+ 
+ type isInterest_RegInfo interface {
+ 	isInterest_RegInfo()
+@@ -106,13 +93,6 @@ func (m *Interest) GetRegInfo() isInterest_RegInfo {
+ 	return nil
+ }
+ 
+-func (m *Interest) GetEventType() EventType {
+-	if m != nil {
+-		return m.EventType
+-	}
+-	return EventType_REGISTER
+-}
+-
+ func (m *Interest) GetChaincodeRegInfo() *ChaincodeReg {
+ 	if x, ok := m.GetRegInfo().(*Interest_ChaincodeRegInfo); ok {
+ 		return x.ChaincodeRegInfo
+@@ -120,13 +100,6 @@ func (m *Interest) GetChaincodeRegInfo() *ChaincodeReg {
+ 	return nil
+ }
+ 
+-func (m *Interest) GetChainID() string {
+-	if m != nil {
+-		return m.ChainID
+-	}
+-	return ""
+-}
+-
+ // XXX_OneofFuncs is for the internal use of the proto package.
+ func (*Interest) XXX_OneofFuncs() (func(msg proto.Message, b *proto.Buffer) error, func(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error), func(msg proto.Message) (n int), []interface{}) {
+ 	return _Interest_OneofMarshaler, _Interest_OneofUnmarshaler, _Interest_OneofSizer, []interface{}{
+@@ -192,7 +165,7 @@ type Register struct {
+ func (m *Register) Reset()                    { *m = Register{} }
+ func (m *Register) String() string            { return proto.CompactTextString(m) }
+ func (*Register) ProtoMessage()               {}
+-func (*Register) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{2} }
++func (*Register) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{2} }
+ 
+ func (m *Register) GetEvents() []*Interest {
+ 	if m != nil {
+@@ -211,7 +184,7 @@ type Rejection struct {
+ func (m *Rejection) Reset()                    { *m = Rejection{} }
+ func (m *Rejection) String() string            { return proto.CompactTextString(m) }
+ func (*Rejection) ProtoMessage()               {}
+-func (*Rejection) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{3} }
++func (*Rejection) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{3} }
+ 
+ func (m *Rejection) GetTx() *Transaction {
+ 	if m != nil {
+@@ -220,13 +193,6 @@ func (m *Rejection) GetTx() *Transaction {
+ 	return nil
+ }
+ 
+-func (m *Rejection) GetErrorMsg() string {
+-	if m != nil {
+-		return m.ErrorMsg
+-	}
+-	return ""
+-}
+-
+ // ---------- producer events ---------
+ type Unregister struct {
+ 	Events []*Interest `protobuf:"bytes,1,rep,name=events" json:"events,omitempty"`
+@@ -235,7 +201,7 @@ type Unregister struct {
+ func (m *Unregister) Reset()                    { *m = Unregister{} }
+ func (m *Unregister) String() string            { return proto.CompactTextString(m) }
+ func (*Unregister) ProtoMessage()               {}
+-func (*Unregister) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{4} }
++func (*Unregister) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{4} }
+ 
+ func (m *Unregister) GetEvents() []*Interest {
+ 	if m != nil {
+@@ -255,21 +221,7 @@ type SignedEvent struct {
+ func (m *SignedEvent) Reset()                    { *m = SignedEvent{} }
+ func (m *SignedEvent) String() string            { return proto.CompactTextString(m) }
+ func (*SignedEvent) ProtoMessage()               {}
+-func (*SignedEvent) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{5} }
+-
+-func (m *SignedEvent) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
+-
+-func (m *SignedEvent) GetEventBytes() []byte {
+-	if m != nil {
+-		return m.EventBytes
+-	}
+-	return nil
+-}
++func (*SignedEvent) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{5} }
+ 
+ // Event is used by
+ //  - consumers (adapters) to send Register
+@@ -289,7 +241,7 @@ type Event struct {
+ func (m *Event) Reset()                    { *m = Event{} }
+ func (m *Event) String() string            { return proto.CompactTextString(m) }
+ func (*Event) ProtoMessage()               {}
+-func (*Event) Descriptor() ([]byte, []int) { return fileDescriptor5, []int{6} }
++func (*Event) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{6} }
+ 
+ type isEvent_Event interface {
+ 	isEvent_Event()
+@@ -359,13 +311,6 @@ func (m *Event) GetUnregister() *Unregister {
+ 	return nil
+ }
+ 
+-func (m *Event) GetCreator() []byte {
+-	if m != nil {
+-		return m.Creator
+-	}
+-	return nil
+-}
+-
+ // XXX_OneofFuncs is for the internal use of the proto package.
+ func (*Event) XXX_OneofFuncs() (func(msg proto.Message, b *proto.Buffer) error, func(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error), func(msg proto.Message) (n int), []interface{}) {
+ 	return _Event_OneofMarshaler, _Event_OneofUnmarshaler, _Event_OneofSizer, []interface{}{
+@@ -514,7 +459,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for Events service
+ 
+@@ -611,12 +556,12 @@ var _Events_serviceDesc = grpc.ServiceDesc{
+ 			ClientStreams: true,
+ 		},
+ 	},
+-	Metadata: "peer/events.proto",
++	Metadata: fileDescriptor6,
+ }
+ 
+-func init() { proto.RegisterFile("peer/events.proto", fileDescriptor5) }
++func init() { proto.RegisterFile("peer/events.proto", fileDescriptor6) }
+ 
+-var fileDescriptor5 = []byte{
++var fileDescriptor6 = []byte{
+ 	// 611 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x94, 0x54, 0x4f, 0x6f, 0x9b, 0x4e,
+ 	0x10, 0x05, 0x27, 0x76, 0xcc, 0xd8, 0xce, 0xcf, 0xd9, 0xfc, 0x14, 0x21, 0xf7, 0x8f, 0x52, 0xaa,
+diff --git a/protos/peer/peer.pb.go b/protos/peer/peer.pb.go
+index bfb0e3f..7b99902 100644
+--- a/protos/peer/peer.pb.go
++++ b/protos/peer/peer.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/peer.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -24,14 +25,7 @@ type PeerID struct {
+ func (m *PeerID) Reset()                    { *m = PeerID{} }
+ func (m *PeerID) String() string            { return proto.CompactTextString(m) }
+ func (*PeerID) ProtoMessage()               {}
+-func (*PeerID) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{0} }
+-
+-func (m *PeerID) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
++func (*PeerID) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{0} }
+ 
+ type PeerEndpoint struct {
+ 	Id      *PeerID `protobuf:"bytes,1,opt,name=id" json:"id,omitempty"`
+@@ -41,7 +35,7 @@ type PeerEndpoint struct {
+ func (m *PeerEndpoint) Reset()                    { *m = PeerEndpoint{} }
+ func (m *PeerEndpoint) String() string            { return proto.CompactTextString(m) }
+ func (*PeerEndpoint) ProtoMessage()               {}
+-func (*PeerEndpoint) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{1} }
++func (*PeerEndpoint) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{1} }
+ 
+ func (m *PeerEndpoint) GetId() *PeerID {
+ 	if m != nil {
+@@ -50,13 +44,6 @@ func (m *PeerEndpoint) GetId() *PeerID {
+ 	return nil
+ }
+ 
+-func (m *PeerEndpoint) GetAddress() string {
+-	if m != nil {
+-		return m.Address
+-	}
+-	return ""
+-}
+-
+ func init() {
+ 	proto.RegisterType((*PeerID)(nil), "protos.PeerID")
+ 	proto.RegisterType((*PeerEndpoint)(nil), "protos.PeerEndpoint")
+@@ -68,7 +55,7 @@ var _ grpc.ClientConn
+ 
+ // This is a compile-time assertion to ensure that this generated file
+ // is compatible with the grpc package it is being compiled against.
+-const _ = grpc.SupportPackageIsVersion4
++const _ = grpc.SupportPackageIsVersion3
+ 
+ // Client API for Endorser service
+ 
+@@ -131,12 +118,12 @@ var _Endorser_serviceDesc = grpc.ServiceDesc{
+ 		},
+ 	},
+ 	Streams:  []grpc.StreamDesc{},
+-	Metadata: "peer/peer.proto",
++	Metadata: fileDescriptor7,
+ }
+ 
+-func init() { proto.RegisterFile("peer/peer.proto", fileDescriptor6) }
++func init() { proto.RegisterFile("peer/peer.proto", fileDescriptor7) }
+ 
+-var fileDescriptor6 = []byte{
++var fileDescriptor7 = []byte{
+ 	// 246 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x54, 0x90, 0x4f, 0x4b, 0xc4, 0x30,
+ 	0x10, 0xc5, 0xdd, 0x22, 0xab, 0x8e, 0xe2, 0x42, 0x04, 0x29, 0x65, 0x11, 0xe9, 0x49, 0x2f, 0x29,
+diff --git a/protos/peer/proposal.pb.go b/protos/peer/proposal.pb.go
+index a02e0bc..fc36764 100644
+--- a/protos/peer/proposal.pb.go
++++ b/protos/peer/proposal.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/proposal.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -48,21 +49,7 @@ type SignedProposal struct {
+ func (m *SignedProposal) Reset()                    { *m = SignedProposal{} }
+ func (m *SignedProposal) String() string            { return proto.CompactTextString(m) }
+ func (*SignedProposal) ProtoMessage()               {}
+-func (*SignedProposal) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{0} }
+-
+-func (m *SignedProposal) GetProposalBytes() []byte {
+-	if m != nil {
+-		return m.ProposalBytes
+-	}
+-	return nil
+-}
+-
+-func (m *SignedProposal) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
++func (*SignedProposal) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{0} }
+ 
+ // A Proposal is sent to an endorser for endorsement.  The proposal contains:
+ // 1. A header which should be unmarshaled to a Header message.  Note that
+@@ -98,28 +85,7 @@ type Proposal struct {
+ func (m *Proposal) Reset()                    { *m = Proposal{} }
+ func (m *Proposal) String() string            { return proto.CompactTextString(m) }
+ func (*Proposal) ProtoMessage()               {}
+-func (*Proposal) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{1} }
+-
+-func (m *Proposal) GetHeader() []byte {
+-	if m != nil {
+-		return m.Header
+-	}
+-	return nil
+-}
+-
+-func (m *Proposal) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+-func (m *Proposal) GetExtension() []byte {
+-	if m != nil {
+-		return m.Extension
+-	}
+-	return nil
+-}
++func (*Proposal) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{1} }
+ 
+ // ChaincodeHeaderExtension is the Header's extentions message to be used when
+ // the Header's type is CHAINCODE.  This extensions is used to specify which
+@@ -144,14 +110,7 @@ type ChaincodeHeaderExtension struct {
+ func (m *ChaincodeHeaderExtension) Reset()                    { *m = ChaincodeHeaderExtension{} }
+ func (m *ChaincodeHeaderExtension) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeHeaderExtension) ProtoMessage()               {}
+-func (*ChaincodeHeaderExtension) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{2} }
+-
+-func (m *ChaincodeHeaderExtension) GetPayloadVisibility() []byte {
+-	if m != nil {
+-		return m.PayloadVisibility
+-	}
+-	return nil
+-}
++func (*ChaincodeHeaderExtension) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{2} }
+ 
+ func (m *ChaincodeHeaderExtension) GetChaincodeId() *ChaincodeID {
+ 	if m != nil {
+@@ -171,20 +130,13 @@ type ChaincodeProposalPayload struct {
+ 	// to implement some form of application-level confidentiality. The contents
+ 	// of this field are supposed to always be omitted from the transaction and
+ 	// excluded from the ledger.
+-	TransientMap map[string][]byte `protobuf:"bytes,2,rep,name=TransientMap,json=transientMap" json:"TransientMap,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value,proto3"`
++	TransientMap map[string][]byte `protobuf:"bytes,2,rep,name=TransientMap" json:"TransientMap,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value,proto3"`
+ }
+ 
+ func (m *ChaincodeProposalPayload) Reset()                    { *m = ChaincodeProposalPayload{} }
+ func (m *ChaincodeProposalPayload) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeProposalPayload) ProtoMessage()               {}
+-func (*ChaincodeProposalPayload) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{3} }
+-
+-func (m *ChaincodeProposalPayload) GetInput() []byte {
+-	if m != nil {
+-		return m.Input
+-	}
+-	return nil
+-}
++func (*ChaincodeProposalPayload) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{3} }
+ 
+ func (m *ChaincodeProposalPayload) GetTransientMap() map[string][]byte {
+ 	if m != nil {
+@@ -215,21 +167,7 @@ type ChaincodeAction struct {
+ func (m *ChaincodeAction) Reset()                    { *m = ChaincodeAction{} }
+ func (m *ChaincodeAction) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeAction) ProtoMessage()               {}
+-func (*ChaincodeAction) Descriptor() ([]byte, []int) { return fileDescriptor7, []int{4} }
+-
+-func (m *ChaincodeAction) GetResults() []byte {
+-	if m != nil {
+-		return m.Results
+-	}
+-	return nil
+-}
+-
+-func (m *ChaincodeAction) GetEvents() []byte {
+-	if m != nil {
+-		return m.Events
+-	}
+-	return nil
+-}
++func (*ChaincodeAction) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{4} }
+ 
+ func (m *ChaincodeAction) GetResponse() *Response {
+ 	if m != nil {
+@@ -253,37 +191,37 @@ func init() {
+ 	proto.RegisterType((*ChaincodeAction)(nil), "protos.ChaincodeAction")
+ }
+ 
+-func init() { proto.RegisterFile("peer/proposal.proto", fileDescriptor7) }
++func init() { proto.RegisterFile("peer/proposal.proto", fileDescriptor8) }
+ 
+-var fileDescriptor7 = []byte{
++var fileDescriptor8 = []byte{
+ 	// 452 bytes of a gzipped FileDescriptorProto
+-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x53, 0x4d, 0x8b, 0xd4, 0x40,
+-	0x10, 0x25, 0x33, 0xba, 0x1f, 0x35, 0xe3, 0x7e, 0xf4, 0x2e, 0x12, 0x86, 0x3d, 0x2c, 0x01, 0x61,
+-	0x05, 0x4d, 0x60, 0x04, 0x11, 0x2f, 0xe2, 0xe8, 0x82, 0x7b, 0x10, 0x96, 0xa8, 0x7b, 0xd8, 0xcb,
+-	0xd8, 0x49, 0xca, 0x4c, 0xb3, 0xb1, 0xbb, 0xe9, 0xee, 0x0c, 0xe6, 0xe8, 0xcf, 0xf1, 0xa7, 0xf8,
+-	0xaf, 0x24, 0xe9, 0x8f, 0x1d, 0x9d, 0x8b, 0xa7, 0x99, 0xaa, 0x7a, 0xef, 0x55, 0xd5, 0xab, 0x0e,
+-	0x9c, 0x48, 0x44, 0x95, 0x49, 0x25, 0xa4, 0xd0, 0xb4, 0x49, 0xa5, 0x12, 0x46, 0x90, 0x9d, 0xe1,
+-	0x47, 0xcf, 0x4e, 0x87, 0x62, 0xb9, 0xa2, 0x8c, 0x97, 0xa2, 0x42, 0x5b, 0x9d, 0x9d, 0xfd, 0x45,
+-	0x59, 0x2a, 0xd4, 0x52, 0x70, 0xed, 0xaa, 0xc9, 0x17, 0x38, 0xf8, 0xc4, 0x6a, 0x8e, 0xd5, 0xb5,
+-	0x03, 0x90, 0x27, 0x70, 0x10, 0xc0, 0x45, 0x67, 0x50, 0xc7, 0xd1, 0x79, 0x74, 0x31, 0xcd, 0x1f,
+-	0xf9, 0xec, 0xa2, 0x4f, 0x92, 0x33, 0xd8, 0xd7, 0xac, 0xe6, 0xd4, 0xb4, 0x0a, 0xe3, 0xd1, 0x80,
+-	0xb8, 0x4f, 0x24, 0xb7, 0xb0, 0x17, 0x04, 0x1f, 0xc3, 0xce, 0x0a, 0x69, 0x85, 0xca, 0x09, 0xb9,
+-	0x88, 0xc4, 0xb0, 0x2b, 0x69, 0xd7, 0x08, 0x5a, 0x39, 0xbe, 0x0f, 0x7b, 0x6d, 0xfc, 0x61, 0x90,
+-	0x6b, 0x26, 0x78, 0x3c, 0xb6, 0xda, 0x21, 0x91, 0xfc, 0x8c, 0x20, 0x7e, 0xe7, 0x97, 0xfc, 0x30,
+-	0x68, 0x5d, 0xfa, 0x22, 0x79, 0x0e, 0xc4, 0xa9, 0x2c, 0xd7, 0x4c, 0xb3, 0x82, 0x35, 0xcc, 0x74,
+-	0xae, 0xf1, 0xb1, 0xab, 0xdc, 0x84, 0x02, 0x79, 0x09, 0xd3, 0xe0, 0xd7, 0x92, 0xd9, 0x41, 0x26,
+-	0xf3, 0x13, 0x6b, 0x8e, 0x4e, 0x43, 0x9b, 0xab, 0xf7, 0xf9, 0x24, 0x00, 0xaf, 0xaa, 0xe4, 0xf7,
+-	0xe6, 0x0c, 0x7e, 0xd3, 0x6b, 0x37, 0xfe, 0x29, 0x3c, 0x64, 0x5c, 0xb6, 0xc6, 0xb5, 0xb5, 0x01,
+-	0xb9, 0x81, 0xe9, 0x67, 0x45, 0xb9, 0x66, 0xc8, 0xcd, 0x47, 0x2a, 0xe3, 0xd1, 0xf9, 0xf8, 0x62,
+-	0x32, 0x9f, 0x6f, 0xb5, 0xfa, 0x47, 0x2d, 0xdd, 0x24, 0x5d, 0x72, 0xa3, 0xba, 0x7c, 0x6a, 0x36,
+-	0x52, 0xb3, 0x37, 0x70, 0xbc, 0x05, 0x21, 0x47, 0x30, 0xbe, 0x43, 0xbb, 0xf7, 0x7e, 0xde, 0xff,
+-	0xed, 0x87, 0x5a, 0xd3, 0xa6, 0xf5, 0xb7, 0xb2, 0xc1, 0xeb, 0xd1, 0xab, 0x28, 0xf9, 0x15, 0xc1,
+-	0x61, 0xe8, 0xfe, 0xb6, 0x34, 0xbd, 0x8d, 0x31, 0xec, 0x2a, 0xd4, 0x6d, 0x63, 0xfc, 0xf5, 0x7d,
+-	0xd8, 0x5f, 0x13, 0xd7, 0xc8, 0x8d, 0x76, 0x42, 0x2e, 0x22, 0xcf, 0x60, 0xcf, 0x3f, 0xad, 0xe1,
+-	0x64, 0x93, 0xf9, 0x91, 0x5f, 0x2d, 0x77, 0xf9, 0x3c, 0x20, 0xb6, 0x7c, 0x7f, 0xf0, 0x7f, 0xbe,
+-	0x2f, 0xbe, 0x42, 0x22, 0x54, 0x9d, 0xae, 0x3a, 0x89, 0xaa, 0xc1, 0xaa, 0x46, 0x95, 0x7e, 0xa3,
+-	0x85, 0x62, 0xa5, 0x67, 0xf6, 0x8f, 0x7d, 0x71, 0x78, 0xef, 0x61, 0x79, 0x47, 0x6b, 0xbc, 0x7d,
+-	0x5a, 0x33, 0xb3, 0x6a, 0x8b, 0xb4, 0x14, 0xdf, 0xb3, 0x0d, 0x6e, 0x66, 0xb9, 0x99, 0xe5, 0x66,
+-	0x3d, 0xb7, 0xb0, 0x1f, 0xd3, 0x8b, 0x3f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x7b, 0x80, 0xe0, 0xda,
++	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x53, 0x4d, 0x6f, 0xd3, 0x4c,
++	0x10, 0x96, 0x93, 0xf7, 0xed, 0xc7, 0x24, 0xf4, 0x63, 0x5b, 0x21, 0x2b, 0xea, 0xa1, 0xb2, 0x84,
++	0x54, 0x24, 0xb0, 0xa5, 0x20, 0x21, 0xc4, 0x05, 0x11, 0xa8, 0x44, 0x0f, 0x48, 0x95, 0x81, 0x1e,
++	0x7a, 0x09, 0x6b, 0x7b, 0x70, 0x56, 0x35, 0xbb, 0xab, 0xdd, 0x75, 0x84, 0x8f, 0xfc, 0x1c, 0x7e,
++	0x0a, 0xff, 0x0a, 0xd9, 0xfb, 0xd1, 0x94, 0x5c, 0x38, 0x25, 0x33, 0xf3, 0x3c, 0xcf, 0xcc, 0x3c,
++	0xb3, 0x86, 0x13, 0x89, 0xa8, 0x32, 0xa9, 0x84, 0x14, 0x9a, 0x36, 0xa9, 0x54, 0xc2, 0x08, 0xb2,
++	0x33, 0xfc, 0xe8, 0xd9, 0xe9, 0x50, 0x2c, 0x57, 0x94, 0xf1, 0x52, 0x54, 0x68, 0xab, 0xb3, 0xb3,
++	0x07, 0x94, 0xa5, 0x42, 0x2d, 0x05, 0xd7, 0xae, 0x9a, 0x7c, 0x81, 0x83, 0x4f, 0xac, 0xe6, 0x58,
++	0x5d, 0x3b, 0x00, 0x79, 0x02, 0x07, 0x01, 0x5c, 0x74, 0x06, 0x75, 0x1c, 0x9d, 0x47, 0x17, 0xd3,
++	0xfc, 0x91, 0xcf, 0x2e, 0xfa, 0x24, 0x39, 0x83, 0x7d, 0xcd, 0x6a, 0x4e, 0x4d, 0xab, 0x30, 0x1e,
++	0x0d, 0x88, 0xfb, 0x44, 0x72, 0x0b, 0x7b, 0x41, 0xf0, 0x31, 0xec, 0xac, 0x90, 0x56, 0xa8, 0x9c,
++	0x90, 0x8b, 0x48, 0x0c, 0xbb, 0x92, 0x76, 0x8d, 0xa0, 0x95, 0xe3, 0xfb, 0xb0, 0xd7, 0xc6, 0x1f,
++	0x06, 0xb9, 0x66, 0x82, 0xc7, 0x63, 0xab, 0x1d, 0x12, 0xc9, 0xcf, 0x08, 0xe2, 0x77, 0x7e, 0xc9,
++	0x0f, 0x83, 0xd6, 0xa5, 0x2f, 0x92, 0xe7, 0x40, 0x9c, 0xca, 0x72, 0xcd, 0x34, 0x2b, 0x58, 0xc3,
++	0x4c, 0xe7, 0x1a, 0x1f, 0xbb, 0xca, 0x4d, 0x28, 0x90, 0x97, 0x30, 0x0d, 0x7e, 0x2d, 0x99, 0x1d,
++	0x64, 0x32, 0x3f, 0xb1, 0xe6, 0xe8, 0x34, 0xb4, 0xb9, 0x7a, 0x9f, 0x4f, 0x02, 0xf0, 0xaa, 0x4a,
++	0x7e, 0x6f, 0xce, 0xe0, 0x37, 0xbd, 0x76, 0xe3, 0x9f, 0xc2, 0xff, 0x8c, 0xcb, 0xd6, 0xb8, 0xb6,
++	0x36, 0x20, 0x37, 0x30, 0xfd, 0xac, 0x28, 0xd7, 0x0c, 0xb9, 0xf9, 0x48, 0x65, 0x3c, 0x3a, 0x1f,
++	0x5f, 0x4c, 0xe6, 0xf3, 0xad, 0x56, 0x7f, 0xa9, 0xa5, 0x9b, 0xa4, 0x4b, 0x6e, 0x54, 0x97, 0x3f,
++	0xd0, 0x99, 0xbd, 0x81, 0xe3, 0x2d, 0x08, 0x39, 0x82, 0xf1, 0x1d, 0xda, 0xbd, 0xf7, 0xf3, 0xfe,
++	0x6f, 0x3f, 0xd4, 0x9a, 0x36, 0xad, 0xbf, 0x95, 0x0d, 0x5e, 0x8f, 0x5e, 0x45, 0xc9, 0xaf, 0x08,
++	0x0e, 0x43, 0xf7, 0xb7, 0xa5, 0xe9, 0x6d, 0x8c, 0x61, 0x57, 0xa1, 0x6e, 0x1b, 0xe3, 0xaf, 0xef,
++	0xc3, 0xfe, 0x9a, 0xb8, 0x46, 0x6e, 0xb4, 0x13, 0x72, 0x11, 0x79, 0x06, 0x7b, 0xfe, 0x69, 0x0d,
++	0x27, 0x9b, 0xcc, 0x8f, 0xfc, 0x6a, 0xb9, 0xcb, 0xe7, 0x01, 0xb1, 0xe5, 0xfb, 0x7f, 0xff, 0xe6,
++	0xfb, 0xe2, 0x2b, 0x24, 0x42, 0xd5, 0xe9, 0xaa, 0x93, 0xa8, 0x1a, 0xac, 0x6a, 0x54, 0xe9, 0x37,
++	0x5a, 0x28, 0x56, 0x7a, 0x66, 0xff, 0xd8, 0x17, 0x87, 0xf7, 0x1e, 0x96, 0x77, 0xb4, 0xc6, 0xdb,
++	0xa7, 0x35, 0x33, 0xab, 0xb6, 0x48, 0x4b, 0xf1, 0x3d, 0xdb, 0xe0, 0x66, 0x96, 0x9b, 0x59, 0x6e,
++	0xd6, 0x73, 0x0b, 0xfb, 0x31, 0xbd, 0xf8, 0x13, 0x00, 0x00, 0xff, 0xff, 0x12, 0x75, 0xb6, 0xaf,
+ 	0x6a, 0x03, 0x00, 0x00,
+ }
+diff --git a/protos/peer/proposal_response.pb.go b/protos/peer/proposal_response.pb.go
+index a84830d..00f36c5 100644
+--- a/protos/peer/proposal_response.pb.go
++++ b/protos/peer/proposal_response.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/proposal_response.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -40,14 +41,7 @@ type ProposalResponse struct {
+ func (m *ProposalResponse) Reset()                    { *m = ProposalResponse{} }
+ func (m *ProposalResponse) String() string            { return proto.CompactTextString(m) }
+ func (*ProposalResponse) ProtoMessage()               {}
+-func (*ProposalResponse) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{0} }
+-
+-func (m *ProposalResponse) GetVersion() int32 {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return 0
+-}
++func (*ProposalResponse) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{0} }
+ 
+ func (m *ProposalResponse) GetTimestamp() *google_protobuf1.Timestamp {
+ 	if m != nil {
+@@ -63,13 +57,6 @@ func (m *ProposalResponse) GetResponse() *Response {
+ 	return nil
+ }
+ 
+-func (m *ProposalResponse) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
+-
+ func (m *ProposalResponse) GetEndorsement() *Endorsement {
+ 	if m != nil {
+ 		return m.Endorsement
+@@ -91,28 +78,7 @@ type Response struct {
+ func (m *Response) Reset()                    { *m = Response{} }
+ func (m *Response) String() string            { return proto.CompactTextString(m) }
+ func (*Response) ProtoMessage()               {}
+-func (*Response) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{1} }
+-
+-func (m *Response) GetStatus() int32 {
+-	if m != nil {
+-		return m.Status
+-	}
+-	return 0
+-}
+-
+-func (m *Response) GetMessage() string {
+-	if m != nil {
+-		return m.Message
+-	}
+-	return ""
+-}
+-
+-func (m *Response) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
++func (*Response) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{1} }
+ 
+ // ProposalResponsePayload is the payload of a proposal response.  This message
+ // is the "bridge" between the client's request and the endorser's action in
+@@ -147,21 +113,7 @@ type ProposalResponsePayload struct {
+ func (m *ProposalResponsePayload) Reset()                    { *m = ProposalResponsePayload{} }
+ func (m *ProposalResponsePayload) String() string            { return proto.CompactTextString(m) }
+ func (*ProposalResponsePayload) ProtoMessage()               {}
+-func (*ProposalResponsePayload) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{2} }
+-
+-func (m *ProposalResponsePayload) GetProposalHash() []byte {
+-	if m != nil {
+-		return m.ProposalHash
+-	}
+-	return nil
+-}
+-
+-func (m *ProposalResponsePayload) GetExtension() []byte {
+-	if m != nil {
+-		return m.Extension
+-	}
+-	return nil
+-}
++func (*ProposalResponsePayload) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{2} }
+ 
+ // An endorsement is a signature of an endorser over a proposal response.  By
+ // producing an endorsement message, an endorser implicitly "approves" that
+@@ -183,21 +135,7 @@ type Endorsement struct {
+ func (m *Endorsement) Reset()                    { *m = Endorsement{} }
+ func (m *Endorsement) String() string            { return proto.CompactTextString(m) }
+ func (*Endorsement) ProtoMessage()               {}
+-func (*Endorsement) Descriptor() ([]byte, []int) { return fileDescriptor8, []int{3} }
+-
+-func (m *Endorsement) GetEndorser() []byte {
+-	if m != nil {
+-		return m.Endorser
+-	}
+-	return nil
+-}
+-
+-func (m *Endorsement) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
++func (*Endorsement) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{3} }
+ 
+ func init() {
+ 	proto.RegisterType((*ProposalResponse)(nil), "protos.ProposalResponse")
+@@ -206,9 +144,9 @@ func init() {
+ 	proto.RegisterType((*Endorsement)(nil), "protos.Endorsement")
+ }
+ 
+-func init() { proto.RegisterFile("peer/proposal_response.proto", fileDescriptor8) }
++func init() { proto.RegisterFile("peer/proposal_response.proto", fileDescriptor9) }
+ 
+-var fileDescriptor8 = []byte{
++var fileDescriptor9 = []byte{
+ 	// 367 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x6c, 0x92, 0x51, 0x4b, 0xfb, 0x30,
+ 	0x14, 0xc5, 0xe9, 0xfe, 0xff, 0xcd, 0x2d, 0x9b, 0x30, 0x2a, 0x68, 0x19, 0x03, 0x47, 0x7d, 0x99,
+diff --git a/protos/peer/query.pb.go b/protos/peer/query.pb.go
+index 3c31d9a..432768c 100644
+--- a/protos/peer/query.pb.go
++++ b/protos/peer/query.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/query.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -23,7 +24,7 @@ type ChaincodeQueryResponse struct {
+ func (m *ChaincodeQueryResponse) Reset()                    { *m = ChaincodeQueryResponse{} }
+ func (m *ChaincodeQueryResponse) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeQueryResponse) ProtoMessage()               {}
+-func (*ChaincodeQueryResponse) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{0} }
++func (*ChaincodeQueryResponse) Descriptor() ([]byte, []int) { return fileDescriptor10, []int{0} }
+ 
+ func (m *ChaincodeQueryResponse) GetChaincodes() []*ChaincodeInfo {
+ 	if m != nil {
+@@ -53,49 +54,7 @@ type ChaincodeInfo struct {
+ func (m *ChaincodeInfo) Reset()                    { *m = ChaincodeInfo{} }
+ func (m *ChaincodeInfo) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeInfo) ProtoMessage()               {}
+-func (*ChaincodeInfo) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{1} }
+-
+-func (m *ChaincodeInfo) GetName() string {
+-	if m != nil {
+-		return m.Name
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeInfo) GetVersion() string {
+-	if m != nil {
+-		return m.Version
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeInfo) GetPath() string {
+-	if m != nil {
+-		return m.Path
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeInfo) GetInput() string {
+-	if m != nil {
+-		return m.Input
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeInfo) GetEscc() string {
+-	if m != nil {
+-		return m.Escc
+-	}
+-	return ""
+-}
+-
+-func (m *ChaincodeInfo) GetVscc() string {
+-	if m != nil {
+-		return m.Vscc
+-	}
+-	return ""
+-}
++func (*ChaincodeInfo) Descriptor() ([]byte, []int) { return fileDescriptor10, []int{1} }
+ 
+ // ChannelQueryResponse returns information about each channel that pertains
+ // to a query in lscc.go, such as GetChannels (returns all channels for a
+@@ -107,7 +66,7 @@ type ChannelQueryResponse struct {
+ func (m *ChannelQueryResponse) Reset()                    { *m = ChannelQueryResponse{} }
+ func (m *ChannelQueryResponse) String() string            { return proto.CompactTextString(m) }
+ func (*ChannelQueryResponse) ProtoMessage()               {}
+-func (*ChannelQueryResponse) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{2} }
++func (*ChannelQueryResponse) Descriptor() ([]byte, []int) { return fileDescriptor10, []int{2} }
+ 
+ func (m *ChannelQueryResponse) GetChannels() []*ChannelInfo {
+ 	if m != nil {
+@@ -124,14 +83,7 @@ type ChannelInfo struct {
+ func (m *ChannelInfo) Reset()                    { *m = ChannelInfo{} }
+ func (m *ChannelInfo) String() string            { return proto.CompactTextString(m) }
+ func (*ChannelInfo) ProtoMessage()               {}
+-func (*ChannelInfo) Descriptor() ([]byte, []int) { return fileDescriptor9, []int{3} }
+-
+-func (m *ChannelInfo) GetChannelId() string {
+-	if m != nil {
+-		return m.ChannelId
+-	}
+-	return ""
+-}
++func (*ChannelInfo) Descriptor() ([]byte, []int) { return fileDescriptor10, []int{3} }
+ 
+ func init() {
+ 	proto.RegisterType((*ChaincodeQueryResponse)(nil), "protos.ChaincodeQueryResponse")
+@@ -140,9 +92,9 @@ func init() {
+ 	proto.RegisterType((*ChannelInfo)(nil), "protos.ChannelInfo")
+ }
+ 
+-func init() { proto.RegisterFile("peer/query.proto", fileDescriptor9) }
++func init() { proto.RegisterFile("peer/query.proto", fileDescriptor10) }
+ 
+-var fileDescriptor9 = []byte{
++var fileDescriptor10 = []byte{
+ 	// 284 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x54, 0x91, 0xdf, 0x4a, 0xc3, 0x30,
+ 	0x14, 0xc6, 0xa9, 0xfb, 0xa3, 0x3b, 0x43, 0x90, 0x38, 0x25, 0x37, 0xc2, 0xe8, 0xd5, 0x04, 0x69,
+diff --git a/protos/peer/signed_cc_dep_spec.pb.go b/protos/peer/signed_cc_dep_spec.pb.go
+index aa95fb3..71692c4 100644
+--- a/protos/peer/signed_cc_dep_spec.pb.go
++++ b/protos/peer/signed_cc_dep_spec.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/signed_cc_dep_spec.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -30,21 +31,7 @@ type SignedChaincodeDeploymentSpec struct {
+ func (m *SignedChaincodeDeploymentSpec) Reset()                    { *m = SignedChaincodeDeploymentSpec{} }
+ func (m *SignedChaincodeDeploymentSpec) String() string            { return proto.CompactTextString(m) }
+ func (*SignedChaincodeDeploymentSpec) ProtoMessage()               {}
+-func (*SignedChaincodeDeploymentSpec) Descriptor() ([]byte, []int) { return fileDescriptor10, []int{0} }
+-
+-func (m *SignedChaincodeDeploymentSpec) GetChaincodeDeploymentSpec() []byte {
+-	if m != nil {
+-		return m.ChaincodeDeploymentSpec
+-	}
+-	return nil
+-}
+-
+-func (m *SignedChaincodeDeploymentSpec) GetInstantiationPolicy() []byte {
+-	if m != nil {
+-		return m.InstantiationPolicy
+-	}
+-	return nil
+-}
++func (*SignedChaincodeDeploymentSpec) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{0} }
+ 
+ func (m *SignedChaincodeDeploymentSpec) GetOwnerEndorsements() []*Endorsement {
+ 	if m != nil {
+@@ -57,9 +44,9 @@ func init() {
+ 	proto.RegisterType((*SignedChaincodeDeploymentSpec)(nil), "protos.SignedChaincodeDeploymentSpec")
+ }
+ 
+-func init() { proto.RegisterFile("peer/signed_cc_dep_spec.proto", fileDescriptor10) }
++func init() { proto.RegisterFile("peer/signed_cc_dep_spec.proto", fileDescriptor11) }
+ 
+-var fileDescriptor10 = []byte{
++var fileDescriptor11 = []byte{
+ 	// 255 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x74, 0x90, 0xc1, 0x4a, 0xc3, 0x40,
+ 	0x10, 0x86, 0xa9, 0x05, 0x0f, 0xab, 0x17, 0x53, 0xc1, 0x28, 0x16, 0x4a, 0x4f, 0xf5, 0x92, 0xa0,
+diff --git a/protos/peer/transaction.pb.go b/protos/peer/transaction.pb.go
+index d232a50..614d313 100644
+--- a/protos/peer/transaction.pb.go
++++ b/protos/peer/transaction.pb.go
+@@ -1,5 +1,6 @@
+-// Code generated by protoc-gen-go. DO NOT EDIT.
++// Code generated by protoc-gen-go.
+ // source: peer/transaction.proto
++// DO NOT EDIT!
+ 
+ package peer
+ 
+@@ -102,7 +103,7 @@ var TxValidationCode_value = map[string]int32{
+ func (x TxValidationCode) String() string {
+ 	return proto.EnumName(TxValidationCode_name, int32(x))
+ }
+-func (TxValidationCode) EnumDescriptor() ([]byte, []int) { return fileDescriptor11, []int{0} }
++func (TxValidationCode) EnumDescriptor() ([]byte, []int) { return fileDescriptor12, []int{0} }
+ 
+ // This message is necessary to facilitate the verification of the signature
+ // (in the signature field) over the bytes of the transaction (in the
+@@ -120,21 +121,7 @@ type SignedTransaction struct {
+ func (m *SignedTransaction) Reset()                    { *m = SignedTransaction{} }
+ func (m *SignedTransaction) String() string            { return proto.CompactTextString(m) }
+ func (*SignedTransaction) ProtoMessage()               {}
+-func (*SignedTransaction) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{0} }
+-
+-func (m *SignedTransaction) GetTransactionBytes() []byte {
+-	if m != nil {
+-		return m.TransactionBytes
+-	}
+-	return nil
+-}
+-
+-func (m *SignedTransaction) GetSignature() []byte {
+-	if m != nil {
+-		return m.Signature
+-	}
+-	return nil
+-}
++func (*SignedTransaction) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{0} }
+ 
+ // ProcessedTransaction wraps an Envelope that includes a transaction along with an indication
+ // of whether the transaction was validated or invalidated by committing peer.
+@@ -152,7 +139,7 @@ type ProcessedTransaction struct {
+ func (m *ProcessedTransaction) Reset()                    { *m = ProcessedTransaction{} }
+ func (m *ProcessedTransaction) String() string            { return proto.CompactTextString(m) }
+ func (*ProcessedTransaction) ProtoMessage()               {}
+-func (*ProcessedTransaction) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{1} }
++func (*ProcessedTransaction) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{1} }
+ 
+ func (m *ProcessedTransaction) GetTransactionEnvelope() *common.Envelope {
+ 	if m != nil {
+@@ -161,13 +148,6 @@ func (m *ProcessedTransaction) GetTransactionEnvelope() *common.Envelope {
+ 	return nil
+ }
+ 
+-func (m *ProcessedTransaction) GetValidationCode() int32 {
+-	if m != nil {
+-		return m.ValidationCode
+-	}
+-	return 0
+-}
+-
+ // The transaction to be sent to the ordering service. A transaction contains
+ // one or more TransactionAction. Each TransactionAction binds a proposal to
+ // potentially multiple actions. The transaction is atomic meaning that either
+@@ -189,7 +169,7 @@ type Transaction struct {
+ func (m *Transaction) Reset()                    { *m = Transaction{} }
+ func (m *Transaction) String() string            { return proto.CompactTextString(m) }
+ func (*Transaction) ProtoMessage()               {}
+-func (*Transaction) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{2} }
++func (*Transaction) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{2} }
+ 
+ func (m *Transaction) GetActions() []*TransactionAction {
+ 	if m != nil {
+@@ -211,21 +191,7 @@ type TransactionAction struct {
+ func (m *TransactionAction) Reset()                    { *m = TransactionAction{} }
+ func (m *TransactionAction) String() string            { return proto.CompactTextString(m) }
+ func (*TransactionAction) ProtoMessage()               {}
+-func (*TransactionAction) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{3} }
+-
+-func (m *TransactionAction) GetHeader() []byte {
+-	if m != nil {
+-		return m.Header
+-	}
+-	return nil
+-}
+-
+-func (m *TransactionAction) GetPayload() []byte {
+-	if m != nil {
+-		return m.Payload
+-	}
+-	return nil
+-}
++func (*TransactionAction) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{3} }
+ 
+ // ChaincodeActionPayload is the message to be used for the TransactionAction's
+ // payload when the Header's type is set to CHAINCODE.  It carries the
+@@ -248,14 +214,7 @@ type ChaincodeActionPayload struct {
+ func (m *ChaincodeActionPayload) Reset()                    { *m = ChaincodeActionPayload{} }
+ func (m *ChaincodeActionPayload) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeActionPayload) ProtoMessage()               {}
+-func (*ChaincodeActionPayload) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{4} }
+-
+-func (m *ChaincodeActionPayload) GetChaincodeProposalPayload() []byte {
+-	if m != nil {
+-		return m.ChaincodeProposalPayload
+-	}
+-	return nil
+-}
++func (*ChaincodeActionPayload) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{4} }
+ 
+ func (m *ChaincodeActionPayload) GetAction() *ChaincodeEndorsedAction {
+ 	if m != nil {
+@@ -279,14 +238,7 @@ type ChaincodeEndorsedAction struct {
+ func (m *ChaincodeEndorsedAction) Reset()                    { *m = ChaincodeEndorsedAction{} }
+ func (m *ChaincodeEndorsedAction) String() string            { return proto.CompactTextString(m) }
+ func (*ChaincodeEndorsedAction) ProtoMessage()               {}
+-func (*ChaincodeEndorsedAction) Descriptor() ([]byte, []int) { return fileDescriptor11, []int{5} }
+-
+-func (m *ChaincodeEndorsedAction) GetProposalResponsePayload() []byte {
+-	if m != nil {
+-		return m.ProposalResponsePayload
+-	}
+-	return nil
+-}
++func (*ChaincodeEndorsedAction) Descriptor() ([]byte, []int) { return fileDescriptor12, []int{5} }
+ 
+ func (m *ChaincodeEndorsedAction) GetEndorsements() []*Endorsement {
+ 	if m != nil {
+@@ -305,9 +257,9 @@ func init() {
+ 	proto.RegisterEnum("protos.TxValidationCode", TxValidationCode_name, TxValidationCode_value)
+ }
+ 
+-func init() { proto.RegisterFile("peer/transaction.proto", fileDescriptor11) }
++func init() { proto.RegisterFile("peer/transaction.proto", fileDescriptor12) }
+ 
+-var fileDescriptor11 = []byte{
++var fileDescriptor12 = []byte{
+ 	// 833 bytes of a gzipped FileDescriptorProto
+ 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x74, 0x54, 0xd1, 0x6e, 0xe2, 0x46,
+ 	0x14, 0x2d, 0xd9, 0x4d, 0xd2, 0x0c, 0xd9, 0x64, 0x32, 0x10, 0x42, 0x50, 0xd4, 0x5d, 0xf1, 0x50,

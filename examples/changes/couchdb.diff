@@ -1,0 +1,41 @@
+diff --git a/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test.go b/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test.go
+index 3defdea..6373fdb 100644
+--- a/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test.go
++++ b/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test.go
+@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
+ 	viper.Set("ledger.state.stateDatabase", "CouchDB")
+ 
+ 	// both vagrant and CI have couchdb configured at host "couchdb"
+-	viper.Set("ledger.state.couchDBConfig.couchDBAddress", "couchdb:5984")
++	viper.Set("ledger.state.couchDBConfig.couchDBAddress", "127.0.0.1:5984")
+ 
+ 	result := m.Run()
+ 	viper.Set("ledger.state.stateDatabase", "goleveldb")
+diff --git a/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test_export.go b/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test_export.go
+index 90b8b81..d171fca 100644
+--- a/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test_export.go
++++ b/core/ledger/kvledger/txmgmt/statedb/statecouchdb/statecouchdb_test_export.go
+@@ -25,8 +25,8 @@ import (
+ )
+ 
+ //Basic setup to test couch
+-var connectURL = "couchdb:5984"
+-var badConnectURL = "couchdb:5990"
++var connectURL = "127.0.0.1:5984"
++var badConnectURL = "127.0.0.1:5990"
+ var username = ""
+ var password = ""
+ 
+diff --git a/core/ledger/kvledger/txmgmt/txmgr/commontests/pkg_test.go b/core/ledger/kvledger/txmgmt/txmgr/commontests/pkg_test.go
+index 2567605..ecd8559 100644
+--- a/core/ledger/kvledger/txmgmt/txmgr/commontests/pkg_test.go
++++ b/core/ledger/kvledger/txmgmt/txmgr/commontests/pkg_test.go
+@@ -105,7 +105,7 @@ func (env *couchDBLockBasedEnv) getName() string {
+ func (env *couchDBLockBasedEnv) init(t *testing.T, testLedgerID string) {
+ 	viper.Set("peer.fileSystemPath", testFilesystemPath)
+ 	// both vagrant and CI have couchdb configured at host "couchdb"
+-	viper.Set("ledger.state.couchDBConfig.couchDBAddress", "couchdb:5984")
++	viper.Set("ledger.state.couchDBConfig.couchDBAddress", "127.0.0.1:5984")
+ 	testDBEnv := statecouchdb.NewTestVDBEnv(t)
+ 	testDB, err := testDBEnv.DBProvider.GetDBHandle(testLedgerID)
+ 	testutil.AssertNoError(t, err, "")

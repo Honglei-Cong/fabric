@@ -1,0 +1,843 @@
+diff --git a/core/ledger/kvledger/kv_ledger_provider.go b/core/ledger/kvledger/kv_ledger_provider.go
+index 6c6591d..9c99da9 100644
+--- a/core/ledger/kvledger/kv_ledger_provider.go
++++ b/core/ledger/kvledger/kv_ledger_provider.go
+@@ -30,6 +30,7 @@ import (
+ 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
+ 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
+ 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/stateleveldb"
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statetidb"
+ 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
+ 	"github.com/hyperledger/fabric/protos/common"
+ 	"github.com/hyperledger/fabric/protos/utils"
+@@ -81,12 +82,19 @@ func NewProvider() (ledger.PeerLedgerProvider, error) {
+ 
+ 	// Initialize the versioned database (state database)
+ 	var vdbProvider statedb.VersionedDBProvider
+-	if !ledgerconfig.IsCouchDBEnabled() {
+-		logger.Debug("Constructing leveldb VersionedDBProvider")
++	var err error
++	switch ledgerconfig.GetLedgerDBType() {
++	case "goleveldb":
++		logger.Debug("Constructing couchdb VersionedDBProvider")
+ 		vdbProvider = stateleveldb.NewVersionedDBProvider()
+-	} else {
+-		logger.Debug("Constructing CouchDB VersionedDBProvider")
+-		var err error
++	case "tidb":
++		logger.Debug("Constructing tidb VersionedDBProvider")
++		vdbProvider, err = statetidb.NewVersionedDBProvider()
++		if err != nil {
++			return nil, err
++		}
++	default:
++		logger.Debug("Constructing leveldb VersionedDBProvider")
+ 		vdbProvider, err = statecouchdb.NewVersionedDBProvider()
+ 		if err != nil {
+ 			return nil, err
+diff --git a/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb.go b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb.go
+new file mode 100644
+index 0000000..d87d4d1
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb.go
+@@ -0,0 +1,292 @@
++/*
++Copyright IBM Corp. 2016 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package statetidb
++
++import (
++	"bytes"
++	"errors"
++
++	"fmt"
++	"sync"
++
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
++	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
++	logging "github.com/op/go-logging"
++	TiDBKV "github.com/pingcap/tidb/kv"
++	"github.com/pingcap/tidb/store/tikv"
++	"github.com/pingcap/tidb/terror"
++)
++
++var logger = logging.MustGetLogger("statetidb")
++
++var compositeKeySep = []byte{0x00}
++var lastKeyIndicator = byte(0x01)
++var savePointKey = []byte{0x00}
++
++type TiDB struct {
++	Driver    *tikv.Driver
++	Store     TiDBKV.Storage
++}
++
++// VersionedDB implements VersionedDB interface
++type versionedDB struct {
++	dbName string
++	db     *TiDB
++}
++
++// VersionedDBProvider implements interface VersionedDBProvider
++type VersionedDBProvider struct {
++	db           *TiDB
++	versionedDBs map[string]*versionedDB
++	mux          sync.Mutex
++}
++
++// NewVersionedDBProvider instantiates VersionedDBProvider
++func NewVersionedDBProvider() (*VersionedDBProvider, error) {
++	tiDBDef := ledgerconfig.GetTiDBDefinition()
++	driver := &tikv.Driver{}
++	store, err := driver.Open(fmt.Sprintf("tikv://%s", tiDBDef.PDAddress))
++	if err != nil {
++		return nil, err
++	}
++
++	return &VersionedDBProvider{
++		db:           &TiDB{driver, store},
++		versionedDBs: make(map[string]*versionedDB),
++		mux:          sync.Mutex{},
++	}, nil
++}
++
++// GetDBHandle gets the handle to a named database
++func (p *VersionedDBProvider) GetDBHandle(dbName string) (statedb.VersionedDB, error) {
++	p.mux.Lock()
++	defer p.mux.Unlock()
++	db := ledgerconfig.GetLedgerOwner() + dbName
++	versionDB := p.versionedDBs[db]
++	if versionDB == nil {
++		versionDB = &versionedDB{db, p.db}
++		p.versionedDBs[db] = versionDB
++	}
++	return versionDB, nil
++}
++
++// Close closes the underlying db
++func (p *VersionedDBProvider) Close() {
++	// do nothing
++}
++
++// Open implements method in VersionedDB interface
++func (vdb *versionedDB) Open() error {
++	// do nothing because shared db is used
++	return nil
++}
++
++// Close implements method in VersionedDB interface
++func (vdb *versionedDB) Close() {
++	// do nothing because shared db is used
++}
++
++func (vdb *versionedDB) GetSavepoint() []byte {
++	return constructCompositeKey(vdb.dbName, "", string(savePointKey))
++}
++
++// GetState implements method in VersionedDB interface
++func (vdb *versionedDB) GetState(namespace string, key string) (*statedb.VersionedValue, error) {
++	logger.Debugf("GetState(). ns=%s, key=%s", namespace, key)
++	compositeKey := constructCompositeKey(vdb.dbName, namespace, key)
++
++	txn, err := vdb.db.Store.Begin()
++	if err != nil {
++		return nil, err
++	}
++	defer txn.Commit()
++	dbVal, err := txn.Get(compositeKey)
++	if err != nil {
++		if terror.ErrorEqual(err, TiDBKV.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, err
++	}
++	if dbVal == nil {
++		return nil, nil
++	}
++	val, ver := statedb.DecodeValue(dbVal)
++	return &statedb.VersionedValue{Value: val, Version: ver}, nil
++}
++
++// GetStateMultipleKeys implements method in VersionedDB interface
++func (vdb *versionedDB) GetStateMultipleKeys(namespace string, keys []string) ([]*statedb.VersionedValue, error) {
++	snapVer, err := vdb.db.Store.CurrentVersion()
++	if err != nil {
++		return nil, err
++	}
++	snap, err := vdb.db.Store.GetSnapshot(snapVer)
++	if err != nil {
++		return nil, err
++	}
++	tiKeys := make([]TiDBKV.Key, 0)
++	for _, key := range keys {
++		tiKeys = append(tiKeys, constructCompositeKey(vdb.dbName, namespace, key))
++	}
++	tiVals, err := snap.BatchGet(tiKeys)
++	if err != nil {
++		return nil, err
++	}
++	vals := make([]*statedb.VersionedValue, len(keys))
++	for i, k := range tiKeys {
++		val, ver := statedb.DecodeValue(tiVals[string(k)])
++		vals[i] = &statedb.VersionedValue{Value: val, Version: ver}
++	}
++	return vals, nil
++}
++
++// GetStateRangeScanIterator implements method in VersionedDB interface
++// startKey is inclusive
++// endKey is exclusive
++func (vdb *versionedDB) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (statedb.ResultsIterator, error) {
++	compositeStartKey := constructCompositeKey(vdb.dbName, namespace, startKey)
++	compositeEndKey := constructCompositeKey(vdb.dbName, namespace, endKey)
++	if endKey == "" {
++		compositeEndKey[len(compositeEndKey)-1] = lastKeyIndicator
++	}
++	snapVer, err := vdb.db.Store.CurrentVersion()
++	if err != nil {
++		return nil, err
++	}
++	snap, err := vdb.db.Store.GetSnapshot(snapVer)
++	if err != nil {
++		return nil, err
++	}
++	dbItr, err := snap.Seek(compositeStartKey)
++	if err != nil {
++		return nil, err
++	}
++	return newKVScanner(vdb.dbName, namespace, compositeEndKey, snap, dbItr), nil
++}
++
++// ExecuteQuery implements method in VersionedDB interface
++func (vdb *versionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIterator, error) {
++	return nil, errors.New("ExecuteQuery not supported for tiKV")
++}
++
++// ApplyUpdates implements method in VersionedDB interface
++func (vdb *versionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version.Height) error {
++	namespaces := batch.GetUpdatedNamespaces()
++	txn, err := vdb.db.Store.Begin()
++	if err != nil {
++		return err
++	}
++
++	for _, ns := range namespaces {
++		updates := batch.GetUpdates(ns)
++		for k, vv := range updates {
++			compositeKey := constructCompositeKey(vdb.dbName, ns, k)
++
++			if vv.Value == nil {
++				txn.Delete(compositeKey)
++			} else {
++				txn.Set(compositeKey, statedb.EncodeValue(vv.Value, vv.Version))
++			}
++		}
++	}
++	txn.Set(vdb.GetSavepoint(), height.ToBytes())
++	if err := txn.Commit(); err != nil {
++		return err
++	}
++	return nil
++}
++
++// GetLatestSavePoint implements method in VersionedDB interface
++func (vdb *versionedDB) GetLatestSavePoint() (*version.Height, error) {
++	txn, err := vdb.db.Store.Begin()
++	if err != nil {
++		return nil, err
++	}
++	defer txn.Commit()
++	versionBytes, err := txn.Get(vdb.GetSavepoint())
++	if err != nil {
++		if terror.ErrorEqual(err, TiDBKV.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, err
++	}
++	if versionBytes == nil {
++		return nil, nil
++	}
++	version, _ := version.NewHeightFromBytes(versionBytes)
++	return version, nil
++}
++
++func constructCompositeKey(db string, ns string, key string) []byte {
++	bytes := append(append([]byte(db), compositeKeySep...), []byte(ns)...)
++	return append(append(bytes, compositeKeySep...), []byte(key)...)
++}
++
++func splitCompositeKey(compositeKey []byte) (string, string, string) {
++	split := bytes.SplitN(compositeKey, compositeKeySep, 3)
++	return string(split[0]), string(split[1]), string(split[2])
++}
++
++type tiKVScanner struct {
++	dbName    string
++	namespace string
++	endKey    []byte
++	snap      TiDBKV.Snapshot
++	dbItr     TiDBKV.Iterator
++	lastErr   error
++}
++
++func newKVScanner(dbName string, namespace string, endKey []byte, snap TiDBKV.Snapshot, dbItr TiDBKV.Iterator) *tiKVScanner {
++	return &tiKVScanner{
++		dbName:    dbName,
++		namespace: namespace,
++		endKey:    endKey,
++		snap:      snap,
++		dbItr:     dbItr,
++		lastErr:   nil,
++	}
++}
++
++func (scanner *tiKVScanner) Next() (statedb.QueryResult, error) {
++	if !scanner.dbItr.Valid() {
++		return nil, scanner.lastErr 	// EOF
++	}
++	dbKey := scanner.dbItr.Key()
++	db, ns, key := splitCompositeKey(dbKey)
++	if ns != scanner.namespace || db != scanner.dbName {
++		return nil, nil			// EOF
++	}
++	if bytes.Compare(dbKey, scanner.endKey) >= 0 {
++		return nil, nil			// EOF
++	}
++
++	dbVal := scanner.dbItr.Value()
++	dbValCopy := make([]byte, len(dbVal))
++	copy(dbValCopy, dbVal)
++	value, ver := statedb.DecodeValue(dbValCopy)
++
++	scanner.lastErr = scanner.dbItr.Next()
++
++	return &statedb.VersionedKV{
++		CompositeKey:   statedb.CompositeKey{Namespace: scanner.namespace, Key: key},
++		VersionedValue: statedb.VersionedValue{Value: value, Version: ver}}, nil
++}
++
++func (scanner *tiKVScanner) Close() {
++	scanner.dbItr.Close()
++}
+diff --git a/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test.go b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test.go
+new file mode 100644
+index 0000000..dff4d3f
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test.go
+@@ -0,0 +1,85 @@
++/*
++Copyright IBM Corp. 2016 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package statetidb
++
++import (
++	"os"
++	"testing"
++
++	"github.com/hyperledger/fabric/common/ledger/testutil"
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/commontests"
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
++	"github.com/spf13/viper"
++)
++
++var TiPDUrl = "pd1:2379"
++
++func TestMain(m *testing.M) {
++	viper.Set("ledger.state.tiDBConfig.pdAddress", TiPDUrl)
++	os.Exit(m.Run())
++}
++
++func TestBasicRW(t *testing.T) {
++	env := NewTestVDBEnv(t)
++	defer env.Cleanup()
++	commontests.TestBasicRW(t, env.DBProvider)
++}
++
++func TestMultiDBBasicRW(t *testing.T) {
++	env := NewTestVDBEnv(t)
++	defer env.Cleanup()
++	commontests.TestMultiDBBasicRW(t, env.DBProvider)
++}
++
++func TestDeletes(t *testing.T) {
++	env := NewTestVDBEnv(t)
++	defer env.Cleanup()
++	commontests.TestDeletes(t, env.DBProvider)
++}
++
++func TestIterator(t *testing.T) {
++	env := NewTestVDBEnv(t)
++	defer env.Cleanup()
++	commontests.TestIterator(t, env.DBProvider)
++}
++
++func TestEncodeDecodeValueAndVersion(t *testing.T) {
++	testValueAndVersionEncodeing(t, []byte("value1"), version.NewHeight(1, 2))
++	testValueAndVersionEncodeing(t, []byte{}, version.NewHeight(50, 50))
++}
++
++func testValueAndVersionEncodeing(t *testing.T, value []byte, version *version.Height) {
++	encodedValue := statedb.EncodeValue(value, version)
++	val, ver := statedb.DecodeValue(encodedValue)
++	testutil.AssertEquals(t, val, value)
++	testutil.AssertEquals(t, ver, version)
++}
++
++func TestCompositeKey(t *testing.T) {
++	testCompositeKey(t, "ledger1", "ns", "key")
++	testCompositeKey(t, "ledger2", "ns", "")
++}
++
++func testCompositeKey(t *testing.T, dbName string, ns string, key string) {
++	compositeKey := constructCompositeKey(dbName, ns, key)
++	t.Logf("compositeKey=%#v", compositeKey)
++	db1, ns1, key1 := splitCompositeKey(compositeKey)
++	testutil.AssertEquals(t, db1, dbName)
++	testutil.AssertEquals(t, ns1, ns)
++	testutil.AssertEquals(t, key1, key)
++}
+diff --git a/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test_export.go b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test_export.go
+new file mode 100644
+index 0000000..6043940
+--- /dev/null
++++ b/core/ledger/kvledger/txmgmt/statedb/statetidb/statetidb_test_export.go
+@@ -0,0 +1,93 @@
++/*
++Copyright IBM Corp. 2016 All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++		 http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++
++package statetidb
++
++import (
++	"testing"
++
++	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
++	TiDBKV "github.com/pingcap/tidb/kv"
++)
++
++// TestVDBEnv provides a level db backed versioned db for testing
++type TestVDBEnv struct {
++	t          testing.TB
++	DBProvider statedb.VersionedDBProvider
++}
++
++// NewTestVDBEnv instantiates and new level db backed TestVDB
++func NewTestVDBEnv(t testing.TB) *TestVDBEnv {
++	t.Logf("Creating new TestVDBEnv")
++	dbProvider, err := NewVersionedDBProvider()
++	if err != nil {
++		t.Fatal(err)
++	}
++	return &TestVDBEnv{t, dbProvider}
++}
++
++// Cleanup closes the db and removes the db folder
++func (env *TestVDBEnv) Cleanup() {
++	env.t.Log("Cleaningup TestVDBEnv")
++	switch p := env.DBProvider.(type) {
++	case *VersionedDBProvider:
++		for dbName := range p.versionedDBs {
++			err := p.cleanupTestDB(dbName)
++			if err != nil {
++				env.t.Fatal(err)
++			}
++		}
++	}
++	env.DBProvider.Close()
++}
++
++func (p *VersionedDBProvider) cleanupTestDB(dbName string) error {
++	db := p.versionedDBs[dbName]
++	if db == nil {
++		return nil
++	}
++
++	txn, err := db.db.Store.Begin()
++	if err != nil {
++		return err
++	}
++	defer txn.Commit()
++
++	keys := make([]TiDBKV.Key, 0)
++	ite, err := txn.Seek([]byte(dbName))
++	if ite != nil && !ite.Valid() {
++		return nil		// EOF
++	}
++	for {
++		err = ite.Next()
++		if err != nil {
++			return err
++		}
++		if !ite.Valid() {
++			break
++		}
++		keys = append(keys, ite.Key())
++	}
++
++	for _, k := range keys {
++		err := txn.Delete(k)
++		if err != nil {
++			return err
++		}
++	}
++
++	return txn.Delete(constructCompositeKey(dbName, "", string(savePointKey)))
++}
+diff --git a/core/ledger/ledgerconfig/ledger_config.go b/core/ledger/ledgerconfig/ledger_config.go
+index 378c4a5..09919e8 100644
+--- a/core/ledger/ledgerconfig/ledger_config.go
++++ b/core/ledger/ledgerconfig/ledger_config.go
+@@ -21,6 +21,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/spf13/viper"
++	"strings"
+ )
+ 
+ // CouchDBDef contains parameters
+@@ -33,6 +34,10 @@ type CouchDBDef struct {
+ 	RequestTimeout      time.Duration
+ }
+ 
++type TiDBDef struct {
++	PDAddress string
++}
++
+ //IsCouchDBEnabled exposes the useCouchDB variable
+ func IsCouchDBEnabled() bool {
+ 	stateDatabase := viper.GetString("ledger.state.stateDatabase")
+@@ -42,6 +47,14 @@ func IsCouchDBEnabled() bool {
+ 	return false
+ }
+ 
++func GetLedgerDBType() string {
++	return strings.ToLower(viper.GetString("ledger.state.stateDatabase"))
++}
++
++func GetLedgerOwner() string {
++	return viper.GetString("peer.id")
++}
++
+ // GetRootPath returns the filesystem path.
+ // All ledger related contents are expected to be stored under this path
+ func GetRootPath() string {
+@@ -87,6 +100,12 @@ func GetCouchDBDefinition() *CouchDBDef {
+ 	return &CouchDBDef{couchDBAddress, username, password, maxRetries, maxRetriesOnStartup, requestTimeout}
+ }
+ 
++func GetTiDBDefinition() *TiDBDef {
++	pdAddress := viper.GetString("ledger.state.tiDBConfig.pdAddress")
++
++	return &TiDBDef{pdAddress}
++}
++
+ //GetQueryLimit exposes the queryLimit variable
+ func GetQueryLimit() int {
+ 	queryLimit := viper.GetInt("ledger.state.queryLimit")
+diff --git a/docker-env.mk b/docker-env.mk
+index 71d59e6..2ac9536 100644
+--- a/docker-env.mk
++++ b/docker-env.mk
+@@ -48,8 +48,9 @@ DOCKER_RUN_FLAGS+=-e 'NO_PROXY=$(NO_PROXY)'
+ endif
+ 
+ DRUN = docker run -i --rm $(DOCKER_RUN_FLAGS) \
+-	-v $(abspath .):/opt/gopath/src/$(PKGNAME) \
++	-v $(GOPATH)/src:/opt/gopath/src \
+ 	-w /opt/gopath/src/$(PKGNAME)
++	#-v $(abspath .):/opt/gopath/src/$(PKGNAME) \
+ 
+ DBUILD = docker build $(DOCKER_BUILD_FLAGS)
+ 
+diff --git a/peer/chaincode/batch_invoke.go b/peer/chaincode/batch_invoke.go
+new file mode 100644
+index 0000000..b0cd6b7
+--- /dev/null
++++ b/peer/chaincode/batch_invoke.go
+@@ -0,0 +1,189 @@
++/*
++Licensed to the Apache Software Foundation (ASF) under one
++or more contributor license agreements.  See the NOTICE file
++distributed with this work for additional information
++regarding copyright ownership.  The ASF licenses this file
++to you under the Apache License, Version 2.0 (the
++"License"); you may not use this file except in compliance
++with the License.  You may obtain a copy of the License at
++
++  http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing,
++software distributed under the License is distributed on an
++"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++KIND, either express or implied.  See the License for the
++specific language governing permissions and limitations
++under the License.
++*/
++
++package chaincode
++
++import (
++	"fmt"
++
++	"encoding/json"
++	"math/rand"
++	"strconv"
++	"strings"
++	"time"
++
++	pb "github.com/hyperledger/fabric/protos/peer"
++	"github.com/spf13/cobra"
++)
++
++var chaincodeBatchInvokeCmd *cobra.Command
++
++type MarbleCtor struct {
++	Args     []string `json:"args"`
++}
++
++func getRandomMarbleName(n int) string {
++	letters := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
++
++	b := make([]rune, n)
++	for i := range b {
++		b[i] = letters[rand.Intn(len(letters))]
++	}
++	return string(b)
++}
++
++func getRandomInitMarbleCtor() []byte {
++	initMarbleCtor := &MarbleCtor{
++		Args:     []string{"initMarble", getRandomMarbleName(16), "blue", "100", "bob"},
++	}
++	bytes, _ := json.Marshal(initMarbleCtor)
++	return bytes
++}
++
++type batchRequest struct {
++	Spec     *pb.ChaincodeSpec
++	ChainID  string
++	invoke   bool
++	reqTimes chan<- requestTime
++}
++
++type requestTime struct {
++	startTime int64
++	endTime   int64
++}
++
++// invokeCmd returns the cobra command for Chaincode Invoke
++func batchInvokeCmd(cf *ChaincodeCmdFactory) *cobra.Command {
++	chaincodeBatchInvokeCmd = &cobra.Command{
++		Use:       "batchInvoke",
++		Short:     fmt.Sprintf("Invoke the specified %s.", chainFuncName),
++		Long:      fmt.Sprintf(`Invoke the specified %s. It will try to commit the endorsed transaction to the network.`, chainFuncName),
++		ValidArgs: []string{"1"},
++		RunE: func(cmd *cobra.Command, args []string) error {
++			return chaincodeBatchInvoke(cmd, args, cf)
++		},
++	}
++
++	return chaincodeBatchInvokeCmd
++}
++
++func chaincodeBatchInvoke(cmd *cobra.Command, args []string, cf *ChaincodeCmdFactory) error {
++	if err := checkChaincodeCmdParams(cmd); err != nil {
++		return err
++	}
++	reqCount, err := strconv.Atoi(batchSize)
++	if err != nil {
++		return err
++	}
++	workers, err := strconv.Atoi(workerCount)
++	if err != nil {
++		return err
++	}
++
++	cfs, err := initCmdFactories(workers)
++	if err != nil {
++		return err
++	}
++	defer closeCmdFactories(cfs)
++	rand.Seed(time.Now().UnixNano())
++
++	requests := make(chan batchRequest, workers*4)
++	reqTimes := make(chan requestTime, 1000)
++	done := make(chan struct{}, workers)
++
++	go buildInvokeRequests(requests, reqCount, reqTimes)
++	batchStartTime := time.Now().UnixNano()
++	for i := 0; i < workers; i++ {
++		go doChaincodeInvoke(done, cfs[i], requests)
++	}
++	go awaitCompletion(done, workers, reqTimes)
++
++	var count, sumDuration int64
++	for reqTime := range reqTimes {
++		count++
++		sumDuration += reqTime.endTime - reqTime.startTime
++	}
++	batchEndTime := time.Now().UnixNano()
++
++	logger.Warning("req count:", count, "batch Time(seconds):", time.Duration(batchEndTime-batchStartTime).String())
++	logger.Warning("workers:", workers, "Seq Time(seconds)", time.Duration(sumDuration).String())
++
++	return nil
++}
++
++func initCmdFactories(n int) ([]*ChaincodeCmdFactory, error) {
++	cfs := make([]*ChaincodeCmdFactory, n)
++	var err error
++	for i := 0; i < n; i++ {
++		if cfs[i], err = InitCmdFactory(true, true); err != nil {
++			closeCmdFactories(cfs)
++			return cfs, err
++		}
++	}
++
++	return cfs, nil
++}
++
++func closeCmdFactories(cfs []*ChaincodeCmdFactory) {
++	for i, cf := range cfs {
++		if cf != nil {
++			cf.BroadcastClient.Close()
++			cfs[i] = nil
++		}
++	}
++}
++
++func buildInvokeRequests(requests chan<- batchRequest, reqCount int, reqTimes chan<- requestTime) {
++	for i := 0; i < reqCount; i++ {
++		spec := &pb.ChaincodeSpec{}
++		// Build the spec
++		input := &pb.ChaincodeInput{}
++		if err := json.Unmarshal(getRandomInitMarbleCtor(), &input); err != nil {
++			logger.Warning("Chaincode argument error: %s \n", err.Error())
++			return
++		}
++
++		chaincodeLang = strings.ToUpper(chaincodeLang)
++		spec = &pb.ChaincodeSpec{
++			Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value[chaincodeLang]),
++			ChaincodeId: &pb.ChaincodeID{Path: chaincodePath, Name: chaincodeName, Version: chaincodeVersion},
++			Input:       input,
++		}
++
++		requests <- batchRequest{spec, chainID, true, reqTimes}
++	}
++	close(requests)
++}
++
++func doChaincodeInvoke(done chan<- struct{}, cf *ChaincodeCmdFactory, requests <-chan batchRequest) {
++	for req := range requests {
++		startTime := time.Now().UnixNano()
++		ChaincodeInvokeOrQuery(req.Spec, req.ChainID, req.invoke, cf.Signer, cf.EndorserClient, cf.BroadcastClient)
++		endTime := time.Now().UnixNano()
++		req.reqTimes <- requestTime{startTime, endTime}
++	}
++	done <- struct{}{}
++}
++
++func awaitCompletion(done <-chan struct{}, n int, reqTimes chan requestTime) {
++	for i := 0; i < n; i++ {
++		<-done
++	}
++	close(reqTimes)
++}
+diff --git a/peer/chaincode/chaincode.go b/peer/chaincode/chaincode.go
+index 9962a4f..6a9c983 100644
+--- a/peer/chaincode/chaincode.go
++++ b/peer/chaincode/chaincode.go
+@@ -59,6 +59,10 @@ func AddFlags(cmd *cobra.Command) {
+ 	flags.StringVarP(&orderingEndpoint, "orderer", "o", "", "Ordering service endpoint")
+ 	flags.BoolVarP(&tls, "tls", "", false, "Use TLS when communicating with the orderer endpoint")
+ 	flags.StringVarP(&caFile, "cafile", "", "", "Path to file containing PEM-encoded trusted certificate(s) for the ordering endpoint")
++	flags.StringVarP(&batchSize, "batchSize", "b", common.UndefinedParamValue,
++		fmt.Sprint("size of batch invoke"))
++	flags.StringVarP(&workerCount, "workerCount", "w", "10",
++		fmt.Sprint("concurrent worker count"))
+ }
+ 
+ // Cmd returns the cobra command for Chaincode
+@@ -72,6 +76,7 @@ func Cmd(cf *ChaincodeCmdFactory) *cobra.Command {
+ 	chaincodeCmd.AddCommand(packageCmd(cf, nil))
+ 	chaincodeCmd.AddCommand(installCmd(cf))
+ 	chaincodeCmd.AddCommand(signpackageCmd(cf))
++	chaincodeCmd.AddCommand(batchInvokeCmd(cf))
+ 
+ 	return chaincodeCmd
+ }
+@@ -95,6 +100,8 @@ var (
+ 	orderingEndpoint  string
+ 	tls               bool
+ 	caFile            string
++	batchSize         string
++	workerCount       string
+ )
+ 
+ var chaincodeCmd = &cobra.Command{
+diff --git a/peer/core.yaml b/peer/core.yaml
+index 197120f..3afbc14 100644
+--- a/peer/core.yaml
++++ b/peer/core.yaml
+@@ -376,9 +376,10 @@ ledger:
+   blockchain:
+ 
+   state:
+-    # stateDatabase - options are "goleveldb", "CouchDB"
++    # stateDatabase - options are "goleveldb", "CouchDB", "TiDB"
+     # goleveldb - default state database stored in goleveldb.
+     # CouchDB - store state database in CouchDB
++    # TiDB - store state base in TiDB
+     stateDatabase: goleveldb
+     couchDBConfig:
+        couchDBAddress: 127.0.0.1:5984
+@@ -390,6 +391,8 @@ ledger:
+        maxRetriesOnStartup: 10
+        # CouchDB request timeout (unit: duration, e.g. 20s)
+        requestTimeout: 20s
++    tiDBConfig:
++        pdAddress: 127.0.0.1:2379
+ 
+     # historyDatabase - options are true or false
+     # Indicates if the history of key updates should be stored in goleveldb

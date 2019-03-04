@@ -1,0 +1,164 @@
+diff --git a/Makefile b/Makefile
+index cbd66ec..34c9050 100755
+--- a/Makefile
++++ b/Makefile
+@@ -109,7 +109,7 @@ license:
+ .PHONY: gotools
+ gotools:
+ 	mkdir -p build/bin
+-	cd gotools && $(MAKE) install BINDIR=$(GOPATH)/bin
++	# cd gotools && $(MAKE) install BINDIR=$(GOPATH)/bin
+ 
+ .PHONY: gotools-clean
+ gotools-clean:
+@@ -216,8 +216,8 @@ build/docker/gotools: gotools/Makefile
+ 		make install BINDIR=/opt/gotools/bin OBJDIR=/opt/gotools/obj
+ 
+ # Both peer and peer-docker depend on ccenv and javaenv (all docker env images it supports).
+-build/bin/peer: build/image/ccenv/$(DUMMY) build/image/javaenv/$(DUMMY)
+-build/image/peer/$(DUMMY): build/image/ccenv/$(DUMMY) build/image/javaenv/$(DUMMY)
++build/bin/peer: build/image/ccenv/$(DUMMY)
++build/image/peer/$(DUMMY): build/image/ccenv/$(DUMMY)
+ 
+ build/bin/%: $(PROJECT_FILES)
+ 	@mkdir -p $(@D)
+@@ -229,19 +229,19 @@ build/bin/%: $(PROJECT_FILES)
+ # payload definitions'
+ build/image/ccenv/payload:      build/docker/gotools/bin/protoc-gen-go \
+ 				build/bin/chaintool \
+-				build/goshim.tar.bz2
+-build/image/javaenv/payload:    build/javashim.tar.bz2 \
+-				build/protos.tar.bz2 \
++				build/goshim.tar
++build/image/javaenv/payload:    build/javashim.tar \
++				build/protos.tar \
+ 				settings.gradle
+ build/image/peer/payload:       build/docker/bin/peer \
+-				build/sampleconfig.tar.bz2
++				build/sampleconfig.tar
+ build/image/orderer/payload:    build/docker/bin/orderer \
+-				build/sampleconfig.tar.bz2
+-build/image/buildenv/payload:   build/gotools.tar.bz2 \
++				build/sampleconfig.tar
++build/image/buildenv/payload:   build/gotools.tar \
+ 				build/docker/gotools/bin/protoc-gen-go
+ build/image/testenv/payload:    build/docker/bin/orderer \
+ 				build/docker/bin/peer \
+-				build/sampleconfig.tar.bz2 \
++				build/sampleconfig.tar \
+ 				images/testenv/install-softhsm2.sh
+ build/image/zookeeper/payload:  images/zookeeper/docker-entrypoint.sh
+ build/image/kafka/payload:      images/kafka/docker-entrypoint.sh \
+@@ -252,7 +252,7 @@ build/image/couchdb/payload:	images/couchdb/docker-entrypoint.sh \
+ build/image/tools/payload:      build/docker/bin/cryptogen \
+ 	                        build/docker/bin/configtxgen \
+ 				build/docker/bin/peer \
+-				build/sampleconfig.tar.bz2
++				build/sampleconfig.tar
+ 
+ build/image/%/payload:
+ 	mkdir -p $@
+@@ -277,22 +277,22 @@ build/image/%/$(DUMMY): Makefile build/image/%/payload build/image/%/Dockerfile
+ 	docker tag $(DOCKER_NS)/fabric-$(TARGET) $(DOCKER_NS)/fabric-$(TARGET):$(DOCKER_TAG)
+ 	@touch $@
+ 
+-build/gotools.tar.bz2: build/docker/gotools
+-	(cd $</bin && tar -jc *) > $@
++build/gotools.tar: build/docker/gotools
++	(cd $</bin && tar -c *) > $@
+ 
+-build/goshim.tar.bz2: $(GOSHIM_DEPS)
++build/goshim.tar: $(GOSHIM_DEPS)
+ 	@echo "Creating $@"
+-	@tar -jhc -C $(GOPATH)/src $(patsubst $(GOPATH)/src/%,%,$(GOSHIM_DEPS)) > $@
++	@tar -hc -C $(GOPATH)/src $(patsubst $(GOPATH)/src/%,%,$(GOSHIM_DEPS)) > $@
+ 
+-build/sampleconfig.tar.bz2: $(shell find sampleconfig -type f)
+-	(cd sampleconfig && tar -jc *) > $@
++build/sampleconfig.tar: $(shell find sampleconfig -type f)
++	(cd sampleconfig && tar -c *) > $@
+ 
+-build/javashim.tar.bz2: $(JAVASHIM_DEPS)
+-build/protos.tar.bz2: $(PROTOS)
++build/javashim.tar: $(JAVASHIM_DEPS)
++build/protos.tar: $(PROTOS)
+ 
+-build/%.tar.bz2:
++build/%.tar:
+ 	@echo "Creating $@"
+-	@tar -jc $^ > $@
++	@tar -c $^ > $@
+ 
+ # builds release packages for the host platform
+ release: $(patsubst %,release/%, $(shell go env GOOS)-$(shell go env GOARCH))
+diff --git a/images/buildenv/Dockerfile.in b/images/buildenv/Dockerfile.in
+index 6ce7f31..da8de81 100644
+--- a/images/buildenv/Dockerfile.in
++++ b/images/buildenv/Dockerfile.in
+@@ -1,3 +1,3 @@
+ FROM _BASE_NS_/fabric-baseimage:_BASE_TAG_
+ COPY payload/protoc-gen-go /usr/local/bin/
+-ADD payload/gotools.tar.bz2 /usr/local/bin/
++ADD payload/gotools.tar /usr/local/bin/
+diff --git a/images/ccenv/Dockerfile.in b/images/ccenv/Dockerfile.in
+index 2390d3b..9c6cb5f 100644
+--- a/images/ccenv/Dockerfile.in
++++ b/images/ccenv/Dockerfile.in
+@@ -1,4 +1,4 @@
+ FROM _BASE_NS_/fabric-baseimage:_BASE_TAG_
+-COPY payload/chaintool payload/protoc-gen-go /usr/local/bin/
+-ADD payload/goshim.tar.bz2 $GOPATH/src/
++COPY payload/chaintool /usr/local/bin/
++ADD payload/goshim.tar $GOPATH/src/
+ RUN mkdir -p /chaincode/input /chaincode/output
+diff --git a/images/javaenv/Dockerfile.in b/images/javaenv/Dockerfile.in
+index b268a55..d085a9e 100644
+--- a/images/javaenv/Dockerfile.in
++++ b/images/javaenv/Dockerfile.in
+@@ -10,8 +10,8 @@ RUN mkdir -p /usr/share/maven /usr/share/maven/ref \
+   && ln -s /usr/share/maven/bin/mvn /usr/bin/mvn
+ ENV MAVEN_HOME /usr/share/maven
+ ENV MAVEN_CONFIG "$USER_HOME_DIR/.m2"
+-ADD payload/javashim.tar.bz2 /root
+-ADD payload/protos.tar.bz2 /root
++ADD payload/javashim.tar /root
++ADD payload/protos.tar /root
+ ADD payload/settings.gradle /root
+ WORKDIR /root
+ # Build java shim after copying proto files from fabric/proto
+diff --git a/images/orderer/Dockerfile.in b/images/orderer/Dockerfile.in
+index 7b1db62..4e04222 100644
+--- a/images/orderer/Dockerfile.in
++++ b/images/orderer/Dockerfile.in
+@@ -2,6 +2,6 @@ FROM _BASE_NS_/fabric-baseos:_BASE_TAG_
+ ENV FABRIC_CFG_PATH /etc/hyperledger/fabric
+ RUN mkdir -p /var/hyperledger/production $FABRIC_CFG_PATH
+ COPY payload/orderer /usr/local/bin
+-ADD payload/sampleconfig.tar.bz2 $FABRIC_CFG_PATH/
++ADD payload/sampleconfig.tar $FABRIC_CFG_PATH/
+ EXPOSE 7050
+ CMD ["orderer"]
+diff --git a/images/peer/Dockerfile.in b/images/peer/Dockerfile.in
+index 1fd14c6..5d6b3eb 100644
+--- a/images/peer/Dockerfile.in
++++ b/images/peer/Dockerfile.in
+@@ -2,5 +2,5 @@ FROM _BASE_NS_/fabric-baseos:_BASE_TAG_
+ ENV FABRIC_CFG_PATH /etc/hyperledger/fabric
+ RUN mkdir -p /var/hyperledger/production $FABRIC_CFG_PATH
+ COPY payload/peer /usr/local/bin
+-ADD  payload/sampleconfig.tar.bz2 $FABRIC_CFG_PATH
++ADD  payload/sampleconfig.tar $FABRIC_CFG_PATH
+ CMD ["peer","node","start"]
+diff --git a/images/testenv/Dockerfile.in b/images/testenv/Dockerfile.in
+index 640ff7e..927e591 100644
+--- a/images/testenv/Dockerfile.in
++++ b/images/testenv/Dockerfile.in
+@@ -9,7 +9,7 @@ RUN mkdir -p \
+   /var/hyperledger/production
+ 
+ # fabric configuration files
+-ADD payload/sampleconfig.tar.bz2 $FABRIC_CFG_PATH
++ADD payload/sampleconfig.tar $FABRIC_CFG_PATH
+ 
+ # fabric binaries
+ COPY payload/orderer /usr/local/bin
